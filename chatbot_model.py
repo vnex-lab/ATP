@@ -155,7 +155,7 @@ class VnexAIChatbot:
         return h
     
     def decode(self, hidden_state: np.ndarray, target_seq: Optional[np.ndarray] = None, 
-               generate: bool = False) -> Tuple[np.ndarray, List[np.ndarray]]:
+               generate: bool = False, temperature: float = 0.8) -> Tuple[np.ndarray, List[np.ndarray], Optional[List[int]]]:
         """
         Decode from hidden state
         
@@ -163,14 +163,17 @@ class VnexAIChatbot:
             hidden_state: Initial hidden state from encoder
             target_seq: Target sequence for training (optional)
             generate: Whether to generate or use teacher forcing
+            temperature: Sampling temperature (higher = more random, lower = more focused)
         
         Returns:
             outputs: Output probabilities for each timestep
             hidden_states: Hidden states for each timestep
+            generated_tokens: List of generated token indices (only in generate mode)
         """
         h = hidden_state
         outputs = []
         hidden_states = [h]
+        generated_tokens = []
         
         # Start token (0) or first target token
         if target_seq is not None and not generate:
@@ -183,22 +186,34 @@ class VnexAIChatbot:
                 outputs.append(output)
                 hidden_states.append(h)
         else:
-            # Generation mode
+            # Generation mode with temperature sampling
             x_t = self.embedding[0].reshape(1, -1)  # Start with <START> token
             for t in range(self.max_length):
                 h = self._tanh(np.dot(x_t, self.Wxh_dec) + np.dot(h, self.Whh_dec) + self.bh_dec)
                 y = np.dot(h, self.Why) + self.by
-                output = self._softmax(y)
+                output = self._softmax(y / temperature)  # Apply temperature
                 outputs.append(output)
                 hidden_states.append(h)
                 
-                # Sample next token
-                next_token = np.argmax(output)
+                # Sample next token with temperature
+                # Flatten output and convert to probabilities
+                probs = output.flatten()
+                
+                # Convert to CPU for sampling if using GPU
+                if GPU_AVAILABLE and hasattr(probs, 'get'):
+                    probs = probs.get()
+                
+                # Sample from probability distribution instead of argmax
+                probs = probs / np.sum(probs)  # Normalize
+                next_token = int(np.random.choice(len(probs), p=probs))
+                
+                generated_tokens.append(next_token)
+                
                 if next_token == 1:  # <END> token
                     break
                 x_t = self.embedding[next_token].reshape(1, -1)
         
-        return np.array(outputs), hidden_states
+        return np.array(outputs), hidden_states, generated_tokens if generate else None
     
     def forward(self, input_seq: np.ndarray, target_seq: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List]:
         """
@@ -214,7 +229,7 @@ class VnexAIChatbot:
             decoder_hidden_states: Decoder hidden states
         """
         encoder_hidden = self.encode(input_seq)
-        outputs, decoder_hidden_states = self.decode(encoder_hidden, target_seq, generate=False)
+        outputs, decoder_hidden_states, _ = self.decode(encoder_hidden, target_seq, generate=False)
         return outputs, encoder_hidden, decoder_hidden_states
     
     def compute_loss(self, outputs: np.ndarray, targets: np.ndarray) -> float:
@@ -397,20 +412,26 @@ class VnexAIChatbot:
             return float(avg_loss.get())  # CuPy to Python float
         return float(avg_loss)  # NumPy to Python float
     
-    def generate_response(self, input_seq: np.ndarray) -> np.ndarray:
-        """Generate a response for given input"""
+    def generate_response(self, input_seq: np.ndarray, temperature: float = 0.8) -> np.ndarray:
+        """
+        Generate a response for given input
+        
+        Args:
+            input_seq: Input token sequence
+            temperature: Sampling temperature (0.1-2.0, default 0.8)
+                        Lower = more focused, Higher = more creative
+        
+        Returns:
+            Generated token sequence
+        """
         encoder_hidden = self.encode(input_seq)
-        outputs, _ = self.decode(encoder_hidden, generate=True)
+        outputs, _, generated_tokens = self.decode(encoder_hidden, generate=True, temperature=temperature)
         
-        # Get tokens from outputs
-        response_tokens = []
-        for output in outputs:
-            token = np.argmax(output)
-            if token == 1:  # <END> token
-                break
-            response_tokens.append(token)
-        
-        return np.array(response_tokens)
+        # Return the generated tokens (already sampled with temperature)
+        # Remove the final <END> token if present
+        if generated_tokens and generated_tokens[-1] == 1:
+            return np.array(generated_tokens[:-1])
+        return np.array(generated_tokens) if generated_tokens else np.array([])
     
     def _to_cpu(self, array):
         """Convert array to CPU (NumPy) for saving"""

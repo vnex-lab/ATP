@@ -525,6 +525,24 @@ def chat_interface_section():
     model = st.session_state.chatbot_model
     tokenizer = st.session_state.tokenizer
     
+    # Temperature slider for creativity control
+    st.subheader("⚙️ Generation Settings")
+    temperature = st.slider(
+        "Temperature (creativity):", 
+        min_value=0.1, 
+        max_value=2.0, 
+        value=0.8, 
+        step=0.1,
+        help="Lower = more focused/repetitive, Higher = more creative/random. Try 0.5-1.0 for best results!"
+    )
+    
+    if temperature < 0.5:
+        st.info("🎯 Low temperature: Very focused, may repeat phrases")
+    elif temperature > 1.5:
+        st.info("🎲 High temperature: Very creative, may be random")
+    else:
+        st.info("✅ Good temperature: Balanced creativity")
+    
     # Chat history display
     st.subheader("Conversation")
     chat_container = st.container()
@@ -547,9 +565,9 @@ def chat_interface_section():
         # Add user message to history
         st.session_state.chat_history.append({'role': 'user', 'content': user_message})
         
-        # Generate response
+        # Generate response with temperature
         input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
-        response_indices = model.generate_response(input_seq)
+        response_indices = model.generate_response(input_seq, temperature=temperature)
         response_text = tokenizer.decode(response_indices.tolist())
         
         # Add bot response to history
