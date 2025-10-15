@@ -65,24 +65,51 @@ class VnexAIChatbot:
     
     def _initialize_weights(self):
         """Initialize all model weights"""
-        np.random.seed(42)
+        global np, GPU_AVAILABLE, DEVICE
         
-        # Embedding layer
-        self.embedding = np.random.randn(self.vocab_size, self.embedding_dim) * 0.01
-        
-        # Encoder RNN weights
-        self.Wxh_enc = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
-        self.Whh_enc = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
-        self.bh_enc = np.zeros((1, self.hidden_dim))
-        
-        # Decoder RNN weights
-        self.Wxh_dec = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
-        self.Whh_dec = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
-        self.bh_dec = np.zeros((1, self.hidden_dim))
-        
-        # Output layer
-        self.Why = np.random.randn(self.hidden_dim, self.vocab_size) * 0.01
-        self.by = np.zeros((1, self.vocab_size))
+        try:
+            np.random.seed(42)
+            
+            # Embedding layer
+            self.embedding = np.random.randn(self.vocab_size, self.embedding_dim) * 0.01
+            
+            # Encoder RNN weights
+            self.Wxh_enc = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
+            self.Whh_enc = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+            self.bh_enc = np.zeros((1, self.hidden_dim))
+            
+            # Decoder RNN weights
+            self.Wxh_dec = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
+            self.Whh_dec = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+            self.bh_dec = np.zeros((1, self.hidden_dim))
+            
+            # Output layer
+            self.Why = np.random.randn(self.hidden_dim, self.vocab_size) * 0.01
+            self.by = np.zeros((1, self.vocab_size))
+            
+        except Exception as e:
+            # GPU failed during initialization, fall back to CPU
+            if GPU_AVAILABLE:
+                import numpy as numpy_fallback
+                np = numpy_fallback
+                GPU_AVAILABLE = False
+                DEVICE = "CPU"
+                self.gpu_available = False
+                self.device = "CPU"
+                
+                # Retry initialization with NumPy
+                np.random.seed(42)
+                self.embedding = np.random.randn(self.vocab_size, self.embedding_dim) * 0.01
+                self.Wxh_enc = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
+                self.Whh_enc = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+                self.bh_enc = np.zeros((1, self.hidden_dim))
+                self.Wxh_dec = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
+                self.Whh_dec = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+                self.bh_dec = np.zeros((1, self.hidden_dim))
+                self.Why = np.random.randn(self.hidden_dim, self.vocab_size) * 0.01
+                self.by = np.zeros((1, self.vocab_size))
+            else:
+                raise e
     
     def _sigmoid(self, x):
         """Sigmoid activation"""
