@@ -226,13 +226,18 @@ class VnexAIChatbot:
             targets: Target token indices [seq_len]
         
         Returns:
-            loss: Average cross-entropy loss
+            loss: Average cross-entropy loss (Python float)
         """
         loss = 0
         for t in range(len(targets)):
             if t < len(outputs):
                 loss += -np.log(outputs[t, 0, targets[t]] + 1e-10)
-        return loss / len(targets)
+        
+        avg_loss = loss / len(targets)
+        # Convert to Python float for compatibility with both NumPy and CuPy
+        if GPU_AVAILABLE and hasattr(avg_loss, 'get'):
+            return float(avg_loss.get())
+        return float(avg_loss)
     
     def backward(self, input_seq: np.ndarray, target_seq: np.ndarray, 
                 outputs: np.ndarray, encoder_hidden: np.ndarray, 
@@ -386,8 +391,11 @@ class VnexAIChatbot:
         # Update weights with averaged gradients
         self.update_weights(accumulated_grads)
         
-        # Return average loss
-        return total_loss / batch_size
+        # Return average loss as Python float (works for both NumPy and CuPy)
+        avg_loss = total_loss / batch_size
+        if GPU_AVAILABLE and hasattr(avg_loss, 'get'):
+            return float(avg_loss.get())  # CuPy to Python float
+        return float(avg_loss)  # NumPy to Python float
     
     def generate_response(self, input_seq: np.ndarray) -> np.ndarray:
         """Generate a response for given input"""
