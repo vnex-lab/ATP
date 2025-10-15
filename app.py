@@ -418,42 +418,73 @@ def training_section():
         
         losses = []
         
+        # Prepare all batches first to get accurate count
+        input_seqs_all = []
+        target_seqs_all = []
+        
+        for conv in data:
+            input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
+            target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
+            
+            if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
+                input_seqs_all.append(input_seq)
+                target_seqs_all.append(target_seq)
+        
+        # Calculate batch info
+        total_samples = len(input_seqs_all)
+        num_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
+        
+        # Print training info to console
+        print("\n" + "="*60)
+        print("🚀 TRAINING STARTED")
+        print("="*60)
+        print(f"📊 Total samples: {total_samples}")
+        print(f"📦 Batch size: {batch_size}")
+        print(f"🔢 Batches per epoch: {num_batches}")
+        print(f"🔄 Total epochs: {epochs}")
+        print(f"💪 Total batches to process: {num_batches * epochs}")
+        if model.gpu_available:
+            print(f"🚀 GPU Mode: ACTIVE (CuPy)")
+        else:
+            print(f"💻 CPU Mode: ACTIVE (NumPy)")
+        print("="*60 + "\n")
+        
         # Training loop - removed spinner so progress bar works!
         for epoch in range(epochs):
             epoch_losses = []
             
             # Shuffle data
             if shuffle_data:
-                indices = np.random.permutation(len(data))
-                data_shuffled = [data[i] for i in indices]
+                indices = np.random.permutation(total_samples)
+                input_seqs_shuffled = [input_seqs_all[i] for i in indices]
+                target_seqs_shuffled = [target_seqs_all[i] for i in indices]
             else:
-                data_shuffled = data
+                input_seqs_shuffled = input_seqs_all
+                target_seqs_shuffled = target_seqs_all
             
-            # Prepare batches
-            input_seqs_all = []
-            target_seqs_all = []
-            
-            for conv in data_shuffled:
-                # Encode sequences
-                input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
-                target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
-                
-                # Skip if too long
-                if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
-                    input_seqs_all.append(input_seq)
-                    target_seqs_all.append(target_seq)
+            print(f"\n📍 Epoch {epoch + 1}/{epochs}")
+            print("-" * 60)
             
             # Train in batches
-            for i in range(0, len(input_seqs_all), batch_size):
-                batch_inputs = input_seqs_all[i:i+batch_size]
-                batch_targets = target_seqs_all[i:i+batch_size]
+            batch_num = 0
+            for i in range(0, len(input_seqs_shuffled), batch_size):
+                batch_inputs = input_seqs_shuffled[i:i+batch_size]
+                batch_targets = target_seqs_shuffled[i:i+batch_size]
                 
                 if len(batch_inputs) > 0:
+                    batch_num += 1
                     loss = model.train_batch(batch_inputs, batch_targets)
                     epoch_losses.append(loss)
+                    
+                    # Print batch progress
+                    print(f"  Batch {batch_num}/{num_batches} | Samples: {len(batch_inputs)} | Loss: {loss:.4f}")
             
             avg_loss = np.mean(epoch_losses) if epoch_losses else 0
             losses.append(avg_loss)
+            
+            # Print epoch summary
+            print(f"  ✅ Epoch {epoch + 1} complete | Avg Loss: {avg_loss:.4f}")
+            print("-" * 60)
             
             # Update progress
             progress = (epoch + 1) / epochs
@@ -470,6 +501,18 @@ def training_section():
         
         model.training_history['loss'] = losses
         st.session_state.is_trained = True
+        
+        # Print final summary
+        print("\n" + "="*60)
+        print("✅ TRAINING COMPLETE!")
+        print("="*60)
+        print(f"📊 Total epochs completed: {epochs}")
+        print(f"📦 Total batches processed: {num_batches * epochs}")
+        print(f"📉 Final loss: {losses[-1]:.4f}")
+        print(f"📈 Starting loss: {losses[0]:.4f}")
+        print(f"💪 Loss improvement: {((losses[0] - losses[-1]) / losses[0] * 100):.1f}%")
+        print("="*60 + "\n")
+        
         st.success("Training complete!")
 
 def chat_interface_section():
