@@ -392,18 +392,27 @@ def training_section():
         st.warning("Please set up tokenizer and training data first!")
         return
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         epochs = st.number_input("Number of epochs:", 1, 1000, 100, 10)
     with col2:
+        batch_size = st.number_input("Batch size:", 1, 128, 32, 1, 
+                                      help="Higher batch size = faster GPU training! Try 32-64 for your GTX 1650")
+    with col3:
         shuffle_data = st.checkbox("Shuffle data", value=True)
+    
+    # Show batch info
+    model = st.session_state.chatbot_model
+    if model.gpu_available:
+        st.info(f"🚀 GPU Mode: Batch size {batch_size} will process {batch_size} samples simultaneously for maximum speed!")
+    else:
+        st.info(f"💻 CPU Mode: Using batch size {batch_size}")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     loss_chart_placeholder = st.empty()
     
     if st.button("Start Training"):
-        model = st.session_state.chatbot_model
         tokenizer = st.session_state.tokenizer
         data = st.session_state.training_data
         
@@ -420,7 +429,10 @@ def training_section():
                 else:
                     data_shuffled = data
                 
-                # Train on each pair
+                # Prepare batches
+                input_seqs_all = []
+                target_seqs_all = []
+                
                 for conv in data_shuffled:
                     # Encode sequences
                     input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
@@ -428,7 +440,16 @@ def training_section():
                     
                     # Skip if too long
                     if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
-                        loss = model.train_step(input_seq, target_seq)
+                        input_seqs_all.append(input_seq)
+                        target_seqs_all.append(target_seq)
+                
+                # Train in batches
+                for i in range(0, len(input_seqs_all), batch_size):
+                    batch_inputs = input_seqs_all[i:i+batch_size]
+                    batch_targets = target_seqs_all[i:i+batch_size]
+                    
+                    if len(batch_inputs) > 0:
+                        loss = model.train_batch(batch_inputs, batch_targets)
                         epoch_losses.append(loss)
                 
                 avg_loss = np.mean(epoch_losses) if epoch_losses else 0
