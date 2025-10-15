@@ -77,21 +77,36 @@ def data_upload_section():
     st.header("📊 Training Data Upload")
     
     st.write("""
-    Upload your conversation training data. Supported formats:
-    - **JSON Conversation**: `[{"user": "Hello", "bot": "Hi there!"}, ...]`
-    - **JSON Code Debugging**: Array with `original_src` and `changed_src` fields
-    - **Text**: Each line as `user: Hello | bot: Hi there!`
+    Upload your conversation training data. Supports multiple formats:
+    - **JSON**: Conversation format or code debugging format
+    - **CSV**: Two columns (user, bot) or (question, answer) or (input, output)
+    - **Text**: Line-by-line with separators (|, →, -, :, tab)
+    - **Numbered JSON**: Format like `0:{...} 1:{...}`
     """)
     
     upload_type = st.radio("Choose upload method:", ["Upload File", "Enter Text Manually"])
     
     if upload_type == "Upload File":
-        uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt'])
+        uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl'])
         
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith('.json'):
-                    raw_data = json.load(uploaded_file)
+                if uploaded_file.name.endswith('.json') or uploaded_file.name.endswith('.jsonl'):
+                    # Handle both JSON and JSONL (JSON Lines)
+                    content = uploaded_file.read().decode('utf-8')
+                    
+                    # Try regular JSON first
+                    try:
+                        raw_data = json.loads(content)
+                    except json.JSONDecodeError:
+                        # Try JSONL (one JSON object per line)
+                        raw_data = []
+                        for line in content.strip().split('\n'):
+                            if line.strip():
+                                try:
+                                    raw_data.append(json.loads(line))
+                                except:
+                                    continue
                     
                     # Check if it's code debugging format
                     if isinstance(raw_data, list) and len(raw_data) > 0:
