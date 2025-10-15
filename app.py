@@ -141,7 +141,7 @@ def data_upload_section():
                     fig = go.Figure([go.Bar(x=missing_data.index, y=missing_data.values)])
                     fig.update_layout(title="Missing Values by Column", 
                                     xaxis_title="Columns", yaxis_title="Missing Count")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="missing_values_chart")
                 else:
                     st.write("No missing values found!")
             
@@ -411,7 +411,7 @@ def training_section():
                         # Update training plot
                         if len(history['loss']) > 1:
                             fig = plot_training_history(history)
-                            chart_placeholder.plotly_chart(fig, use_container_width=True)
+                            chart_placeholder.plotly_chart(fig, use_container_width=True, key="training_progress_chart")
                 
                 # Store training history
                 st.session_state.training_history = history
@@ -431,7 +431,7 @@ def training_section():
     if st.session_state.training_history is not None:
         st.subheader("Training History")
         fig = plot_training_history(st.session_state.training_history)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="training_history_chart")
 
 def evaluation_section():
     st.header("📈 Model Evaluation")
@@ -534,7 +534,7 @@ def evaluation_section():
                     height=400
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="feature_importance_chart")
     
     except Exception as e:
         st.error(f"Error during evaluation: {str(e)}")

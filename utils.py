@@ -197,7 +197,7 @@ def display_model_performance(model, X_test: np.ndarray, y_test: np.ndarray,
         with col2:
             st.subheader("Confusion Matrix")
             cm_fig = plot_confusion_matrix(metrics['y_true_classes'], metrics['y_pred_classes'], class_names)
-            st.plotly_chart(cm_fig, use_container_width=True)
+            st.plotly_chart(cm_fig, use_container_width=True, key="confusion_matrix_chart")
     
     else:
         # Regression metrics
@@ -215,7 +215,7 @@ def display_model_performance(model, X_test: np.ndarray, y_test: np.ndarray,
         with col2:
             st.subheader("Predicted vs Actual")
             reg_fig = plot_regression_results(y_test, y_pred)
-            st.plotly_chart(reg_fig, use_container_width=True)
+            st.plotly_chart(reg_fig, use_container_width=True, key="regression_results_chart")
 
 def create_architecture_diagram(layers: List[int]) -> str:
     """
