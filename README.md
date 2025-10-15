@@ -123,6 +123,31 @@ When you create a model, the app will show:
 
 Training on GPU can be **10-100x faster** depending on your hardware!
 
+### Fixing GPU Issues on Windows
+
+If you have a GPU but the app shows "CPU Mode", you might be missing CUDA components:
+
+**Error**: `DLL load failed while importing curand`
+
+**Solution**:
+1. **Install CUDA Toolkit**: Download from [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads)
+   - Choose CUDA 12.x version (matches cupy-cuda12x)
+   - Make sure to install the full toolkit, not just drivers
+
+2. **Verify Installation**:
+   - Open Command Prompt and run: `nvcc --version`
+   - Should show CUDA version 12.x
+
+3. **Reinstall CuPy** (if needed):
+   ```bash
+   pip uninstall cupy-cuda12x
+   pip install cupy-cuda12x
+   ```
+
+4. **Restart the app** - it should now detect and use your GPU!
+
+**Note**: Your GPU must be NVIDIA with CUDA support. AMD/Intel GPUs won't work with CuPy.
+
 ## Model Architecture
 
 - **Type**: Sequence-to-sequence RNN (Encoder-Decoder)

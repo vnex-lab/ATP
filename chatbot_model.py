@@ -5,19 +5,30 @@ from typing import List, Dict, Tuple, Optional
 # GPU Support - Try CuPy first, fallback to NumPy
 try:
     import cupy as cp
-    # Test if GPU is actually usable
+    # Test if GPU is actually usable with all features we need
     try:
-        _ = cp.array([1, 2, 3])
+        # Test basic array operations
+        test_arr = cp.array([1, 2, 3])
+        # Test random number generation (this is where DLL errors often happen)
+        cp.random.seed(42)
+        test_random = cp.random.randn(5, 5)
+        # Test math operations
+        _ = cp.exp(test_random)
+        
+        # If all tests pass, use GPU
         np = cp
         GPU_AVAILABLE = True
         DEVICE = "GPU"
-    except Exception:
-        # CuPy installed but GPU not usable (driver issues, etc.)
+        print("✅ GPU detected and verified - using CuPy for acceleration!")
+    except Exception as e:
+        # CuPy installed but GPU not usable (driver issues, DLL errors, etc.)
+        print(f"⚠️ GPU detected but not usable ({str(e)[:50]}...) - falling back to CPU")
         import numpy as np
         GPU_AVAILABLE = False
         DEVICE = "CPU"
 except ImportError:
     # CuPy not installed
+    print("ℹ️ CuPy not installed - using CPU mode (install cupy-cuda12x for GPU support)")
     import numpy as np
     GPU_AVAILABLE = False
     DEVICE = "CPU"
