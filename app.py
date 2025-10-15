@@ -418,59 +418,59 @@ def training_section():
         
         losses = []
         
-        with st.spinner("Training in progress..."):
-            for epoch in range(epochs):
-                epoch_losses = []
-                
-                # Shuffle data
-                if shuffle_data:
-                    indices = np.random.permutation(len(data))
-                    data_shuffled = [data[i] for i in indices]
-                else:
-                    data_shuffled = data
-                
-                # Prepare batches
-                input_seqs_all = []
-                target_seqs_all = []
-                
-                for conv in data_shuffled:
-                    # Encode sequences
-                    input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
-                    target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
-                    
-                    # Skip if too long
-                    if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
-                        input_seqs_all.append(input_seq)
-                        target_seqs_all.append(target_seq)
-                
-                # Train in batches
-                for i in range(0, len(input_seqs_all), batch_size):
-                    batch_inputs = input_seqs_all[i:i+batch_size]
-                    batch_targets = target_seqs_all[i:i+batch_size]
-                    
-                    if len(batch_inputs) > 0:
-                        loss = model.train_batch(batch_inputs, batch_targets)
-                        epoch_losses.append(loss)
-                
-                avg_loss = np.mean(epoch_losses) if epoch_losses else 0
-                losses.append(avg_loss)
-                
-                # Update progress
-                progress = (epoch + 1) / epochs
-                progress_bar.progress(progress)
-                status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f}")
-                
-                # Update chart every 10 epochs
-                if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-                    import plotly.graph_objects as go
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(y=losses, mode='lines', name='Training Loss'))
-                    fig.update_layout(title="Training Loss", xaxis_title="Epoch", yaxis_title="Loss")
-                    loss_chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"training_loss_{epoch}")
+        # Training loop - removed spinner so progress bar works!
+        for epoch in range(epochs):
+            epoch_losses = []
             
-            model.training_history['loss'] = losses
-            st.session_state.is_trained = True
-            st.success("Training complete!")
+            # Shuffle data
+            if shuffle_data:
+                indices = np.random.permutation(len(data))
+                data_shuffled = [data[i] for i in indices]
+            else:
+                data_shuffled = data
+            
+            # Prepare batches
+            input_seqs_all = []
+            target_seqs_all = []
+            
+            for conv in data_shuffled:
+                # Encode sequences
+                input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
+                target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
+                
+                # Skip if too long
+                if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
+                    input_seqs_all.append(input_seq)
+                    target_seqs_all.append(target_seq)
+            
+            # Train in batches
+            for i in range(0, len(input_seqs_all), batch_size):
+                batch_inputs = input_seqs_all[i:i+batch_size]
+                batch_targets = target_seqs_all[i:i+batch_size]
+                
+                if len(batch_inputs) > 0:
+                    loss = model.train_batch(batch_inputs, batch_targets)
+                    epoch_losses.append(loss)
+            
+            avg_loss = np.mean(epoch_losses) if epoch_losses else 0
+            losses.append(avg_loss)
+            
+            # Update progress
+            progress = (epoch + 1) / epochs
+            progress_bar.progress(progress)
+            status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f}")
+            
+            # Update chart every 10 epochs
+            if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
+                import plotly.graph_objects as go
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(y=losses, mode='lines', name='Training Loss'))
+                fig.update_layout(title="Training Loss", xaxis_title="Epoch", yaxis_title="Loss")
+                loss_chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"training_loss_{epoch}")
+        
+        model.training_history['loss'] = losses
+        st.session_state.is_trained = True
+        st.success("Training complete!")
 
 def chat_interface_section():
     st.header("💬 Chat with Your AI")
