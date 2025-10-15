@@ -204,8 +204,10 @@ class VnexAIChatbot:
                     probs = probs.get()
                 
                 # Sample from probability distribution instead of argmax
-                probs = probs / np.sum(probs)  # Normalize
-                next_token = int(np.random.choice(len(probs), p=probs))
+                probs = probs / probs.sum()  # Normalize
+                # Use size=1 for CuPy compatibility
+                import numpy as real_np
+                next_token = int(real_np.random.choice(len(probs), size=1, p=probs)[0])
                 
                 generated_tokens.append(next_token)
                 
