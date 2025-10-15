@@ -1,27 +1,19 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 import json
 import io
-import zipfile
-from vnexai import VnexAI
-from data_preprocessor import DataPreprocessor
-from utils import (
-    plot_training_history, display_model_performance, 
-    create_architecture_diagram, validate_dataset, 
-    get_recommended_architecture
-)
+from chatbot_model import VnexAIChatbot
+from chatbot_tokenizer import ChatbotTokenizer
 
 # Set page configuration
 st.set_page_config(
-    page_title="VnexAI - Custom Neural Network Builder",
-    page_icon="🧠",
+    page_title="VnexAI Chatbot - Train Your Own AI",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
     <style>
     .main-header {
@@ -30,650 +22,397 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
     }
-    .sub-header {
-        font-size: 1.5rem;
-        color: #555;
-        margin-bottom: 1rem;
+    .chat-message {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .user-message {
+        background-color: #e3f2fd;
+        text-align: right;
+    }
+    .bot-message {
+        background-color: #f5f5f5;
+        text-align: left;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'preprocessor' not in st.session_state:
-    st.session_state.preprocessor = None
-if 'X_train' not in st.session_state:
-    st.session_state.X_train = None
-if 'X_val' not in st.session_state:
-    st.session_state.X_val = None
-if 'X_test' not in st.session_state:
-    st.session_state.X_test = None
-if 'y_train' not in st.session_state:
-    st.session_state.y_train = None
-if 'y_val' not in st.session_state:
-    st.session_state.y_val = None
-if 'y_test' not in st.session_state:
-    st.session_state.y_test = None
-if 'training_history' not in st.session_state:
-    st.session_state.training_history = None
+if 'chatbot_model' not in st.session_state:
+    st.session_state.chatbot_model = None
+if 'tokenizer' not in st.session_state:
+    st.session_state.tokenizer = None
+if 'training_data' not in st.session_state:
+    st.session_state.training_data = None
 if 'is_trained' not in st.session_state:
     st.session_state.is_trained = False
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 
 def main():
     # Main title
-    st.markdown('<h1 class="main-header">🧠 VnexAI - Custom Neural Network Builder</h1>', unsafe_allow_html=True)
-    st.markdown("Build and train custom neural networks from scratch using NumPy!")
+    st.markdown('<h1 class="main-header">🤖 VnexAI Chatbot</h1>', unsafe_allow_html=True)
+    st.markdown("Train your own conversational AI from scratch and export as .bin!")
     
-    # Sidebar for navigation
+    # Sidebar navigation
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox(
         "Choose a section:",
-        ["Data Upload & Preprocessing", "Model Architecture", "Training", "Evaluation", "Model Management"]
+        ["Data Upload", "Model Setup", "Training", "Chat Interface", "Export Model"]
     )
     
-    if page == "Data Upload & Preprocessing":
+    if page == "Data Upload":
         data_upload_section()
-    elif page == "Model Architecture":
-        model_architecture_section()
+    elif page == "Model Setup":
+        model_setup_section()
     elif page == "Training":
         training_section()
-    elif page == "Evaluation":
-        evaluation_section()
-    elif page == "Model Management":
-        model_management_section()
+    elif page == "Chat Interface":
+        chat_interface_section()
+    elif page == "Export Model":
+        export_model_section()
 
 def data_upload_section():
-    st.header("📊 Data Upload & Preprocessing")
+    st.header("📊 Training Data Upload")
     
-    # File upload
-    uploaded_file = st.file_uploader("Upload your CSV dataset", type=['csv'])
+    st.write("""
+    Upload your conversation training data. Supported formats:
+    - **JSON**: `[{"user": "Hello", "bot": "Hi there!"}, ...]`
+    - **Text**: Each line as `user: Hello | bot: Hi there!`
+    """)
     
-    if uploaded_file is not None:
-        try:
-            # Load data
-            df = pd.read_csv(uploaded_file)
-            st.success(f"Dataset loaded successfully! Shape: {df.shape}")
-            
-            # Validate dataset
-            is_valid, issues = validate_dataset(df)
-            if not is_valid:
-                st.warning("Dataset validation issues:")
-                for issue in issues:
-                    st.write(f"⚠️ {issue}")
-                st.write("Please fix these issues or proceed with caution.")
-            else:
-                st.success("✅ Dataset validation passed!")
-            
-            # Display basic info
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Rows", df.shape[0])
-            with col2:
-                st.metric("Columns", df.shape[1])
-            with col3:
-                missing_values = df.isnull().sum().sum()
-                st.metric("Missing Values", missing_values)
-            
-            # Show data preview
-            st.subheader("Data Preview")
-            st.dataframe(df.head())
-            
-            # Data info
-            st.subheader("Dataset Information")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Column Data Types:**")
-                dtype_df = pd.DataFrame({
-                    'Column': df.columns,
-                    'Data Type': df.dtypes,
-                    'Null Count': df.isnull().sum(),
-                    'Unique Values': [df[col].nunique() for col in df.columns]
-                })
-                st.dataframe(dtype_df)
-            
-            with col2:
-                st.write("**Missing Values Heatmap:**")
-                if df.isnull().sum().sum() > 0:
-                    missing_data = df.isnull().sum()
-                    missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
-                    fig = go.Figure([go.Bar(x=missing_data.index, y=missing_data.values)])
-                    fig.update_layout(title="Missing Values by Column", 
-                                    xaxis_title="Columns", yaxis_title="Missing Count")
-                    st.plotly_chart(fig, use_container_width=True, key="missing_values_chart")
-                else:
-                    st.write("No missing values found!")
-            
-            # Target selection and preprocessing
-            st.subheader("Preprocessing Configuration")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                target_column = st.selectbox("Select target column:", df.columns.tolist())
-            
-            with col2:
-                test_size = st.slider("Test set size", 0.1, 0.4, 0.2, 0.05)
-                val_size = st.slider("Validation set size (from training)", 0.1, 0.3, 0.1, 0.05)
-            
-            if st.button("Preprocess Data"):
-                with st.spinner("Preprocessing data..."):
-                    try:
-                        # Initialize preprocessor
-                        preprocessor = DataPreprocessor()
-                        
-                        # Preprocess data
-                        X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess_data(
-                            df, target_column, test_size=test_size, val_size=val_size
-                        )
-                        
-                        # Store in session state
-                        st.session_state.preprocessor = preprocessor
-                        st.session_state.X_train = X_train
-                        st.session_state.X_val = X_val
-                        st.session_state.X_test = X_test
-                        st.session_state.y_train = y_train
-                        st.session_state.y_val = y_val
-                        st.session_state.y_test = y_test
-                        
-                        st.success("Data preprocessing completed!")
-                        
-                        # Display preprocessing info
-                        info = preprocessor.get_preprocessing_info()
-                        st.write("**Preprocessing Summary:**")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Problem Type", info['problem_type'].title())
-                        with col2:
-                            st.metric("Features", info['num_features'])
-                        with col3:
-                            st.metric("Classes/Output Size", info['num_classes'])
-                        
-                        # Display data splits
-                        st.write("**Data Splits:**")
-                        split_data = pd.DataFrame({
-                            'Split': ['Training', 'Validation', 'Test'],
-                            'Samples': [X_train.shape[0], X_val.shape[0], X_test.shape[0]],
-                            'Percentage': [
-                                f"{X_train.shape[0]/df.shape[0]*100:.1f}%",
-                                f"{X_val.shape[0]/df.shape[0]*100:.1f}%",
-                                f"{X_test.shape[0]/df.shape[0]*100:.1f}%"
-                            ]
-                        })
-                        st.dataframe(split_data)
-                        
-                    except Exception as e:
-                        st.error(f"Error during preprocessing: {str(e)}")
+    upload_type = st.radio("Choose upload method:", ["Upload File", "Enter Text Manually"])
+    
+    if upload_type == "Upload File":
+        uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt'])
         
-        except Exception as e:
-            st.error(f"Error loading dataset: {str(e)}")
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith('.json'):
+                    data = json.load(uploaded_file)
+                    st.session_state.training_data = data
+                else:  # txt file
+                    lines = uploaded_file.read().decode('utf-8').split('\n')
+                    data = []
+                    for line in lines:
+                        if '|' in line:
+                            parts = line.split('|')
+                            if len(parts) == 2:
+                                user_text = parts[0].replace('user:', '').strip()
+                                bot_text = parts[1].replace('bot:', '').strip()
+                                data.append({'user': user_text, 'bot': bot_text})
+                    st.session_state.training_data = data
+                
+                st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
+                
+                # Show preview
+                st.subheader("Data Preview")
+                for i, conv in enumerate(st.session_state.training_data[:5]):
+                    st.write(f"**Pair {i+1}:**")
+                    st.write(f"👤 User: {conv['user']}")
+                    st.write(f"🤖 Bot: {conv['bot']}")
+                    st.write("---")
+                
+            except Exception as e:
+                st.error(f"Error loading data: {str(e)}")
     
-    else:
-        st.info("👆 Please upload a CSV file to get started")
+    else:  # Manual entry
+        st.subheader("Enter Conversation Pairs")
+        
+        if 'manual_data' not in st.session_state:
+            st.session_state.manual_data = []
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            user_input = st.text_area("User message:", key="user_manual")
+        with col2:
+            bot_input = st.text_area("Bot response:", key="bot_manual")
+        
+        if st.button("Add Pair"):
+            if user_input and bot_input:
+                st.session_state.manual_data.append({'user': user_input, 'bot': bot_input})
+                st.success("Pair added!")
+                st.rerun()
+        
+        if st.session_state.manual_data:
+            st.write(f"**Current pairs: {len(st.session_state.manual_data)}**")
+            for i, conv in enumerate(st.session_state.manual_data):
+                col1, col2, col3 = st.columns([4, 4, 1])
+                with col1:
+                    st.write(f"👤 {conv['user']}")
+                with col2:
+                    st.write(f"🤖 {conv['bot']}")
+                with col3:
+                    if st.button("❌", key=f"del_{i}"):
+                        st.session_state.manual_data.pop(i)
+                        st.rerun()
+            
+            if st.button("Use This Data"):
+                st.session_state.training_data = st.session_state.manual_data
+                st.success("Training data set!")
 
-def model_architecture_section():
-    st.header("🏗️ Model Architecture")
+def model_setup_section():
+    st.header("🏗️ Model Configuration")
     
-    if st.session_state.preprocessor is None:
-        st.warning("Please upload and preprocess data first!")
+    if st.session_state.training_data is None:
+        st.warning("Please upload training data first!")
         return
     
-    # Get preprocessing info
-    info = st.session_state.preprocessor.get_preprocessing_info()
-    num_features = info['num_features']
-    num_classes = info['num_classes']
-    problem_type = info['problem_type']
-    
-    st.write(f"**Input Features:** {num_features}")
-    st.write(f"**Output Size:** {num_classes}")
-    st.write(f"**Problem Type:** {problem_type.title()}")
-    
-    # Architecture configuration
-    st.subheader("Network Architecture")
+    st.write(f"**Training pairs available:** {len(st.session_state.training_data)}")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**Architecture Options:**")
-        arch_option = st.radio(
-            "Choose architecture:",
-            ["Recommended", "Custom"]
-        )
+        st.subheader("Tokenizer Settings")
+        max_vocab_size = st.number_input("Maximum vocabulary size:", 1000, 50000, 10000, 1000)
         
-        if arch_option == "Recommended":
-            layers = get_recommended_architecture(num_features, num_classes, problem_type)
-            st.write("**Recommended Architecture:**")
-            for i, layer_size in enumerate(layers):
-                if i == 0:
-                    st.write(f"Input Layer: {layer_size}")
-                elif i == len(layers) - 1:
-                    st.write(f"Output Layer: {layer_size}")
-                else:
-                    st.write(f"Hidden Layer {i}: {layer_size}")
-        
-        else:  # Custom architecture
-            st.write("**Custom Architecture:**")
-            layers = [num_features]  # Input layer
-            
-            num_hidden = st.number_input("Number of hidden layers:", 1, 10, 2)
-            
-            for i in range(num_hidden):
-                hidden_size = st.number_input(f"Hidden layer {i+1} size:", 1, 1000, 32)
-                layers.append(hidden_size)
-            
-            layers.append(num_classes)  # Output layer
+        if st.button("Build Vocabulary"):
+            with st.spinner("Building vocabulary..."):
+                # Collect all texts
+                all_texts = []
+                for conv in st.session_state.training_data:
+                    all_texts.append(conv['user'])
+                    all_texts.append(conv['bot'])
+                
+                # Build tokenizer
+                tokenizer = ChatbotTokenizer(max_vocab_size=max_vocab_size)
+                tokenizer.build_vocabulary(all_texts)
+                st.session_state.tokenizer = tokenizer
+                
+                vocab_info = tokenizer.get_vocab_info()
+                st.success(f"Vocabulary built! Size: {vocab_info['vocab_size']}")
+                
+                # Show vocabulary info
+                st.write("**Vocabulary Info:**")
+                st.json(vocab_info)
     
     with col2:
-        st.write("**Hyperparameters:**")
-        learning_rate = st.number_input("Learning rate:", 0.001, 1.0, 0.01, 0.001, format="%.3f")
-        activation = st.selectbox("Hidden layers activation:", ['relu', 'sigmoid', 'tanh'])
+        st.subheader("Model Architecture")
         
-        if problem_type == 'classification':
-            if num_classes > 2:
-                output_activation = 'softmax'
-                st.write("Output activation: Softmax (multi-class)")
-            else:
-                output_activation = st.selectbox("Output activation:", ['sigmoid', 'softmax'])
+        if st.session_state.tokenizer is None:
+            st.info("Build vocabulary first")
         else:
-            output_activation = st.selectbox("Output activation:", ['linear', 'relu'])
-    
-    # Display architecture diagram
-    st.subheader("Architecture Visualization")
-    diagram = create_architecture_diagram(layers)
-    st.text(diagram)
-    
-    # Create model
-    if st.button("Create Model"):
-        try:
-            model = VnexAI(
-                layers=layers,
-                learning_rate=learning_rate,
-                activation=activation,
-                output_activation=output_activation
-            )
+            vocab_size = st.session_state.tokenizer.vocab_size
+            st.write(f"**Vocabulary Size:** {vocab_size}")
             
-            st.session_state.model = model
-            st.session_state.is_trained = False
+            embedding_dim = st.number_input("Embedding dimension:", 32, 512, 128, 32)
+            hidden_dim = st.number_input("Hidden dimension:", 64, 1024, 256, 64)
+            max_length = st.number_input("Max sequence length:", 10, 100, 50, 10)
+            learning_rate = st.number_input("Learning rate:", 0.001, 0.1, 0.01, 0.001, format="%.3f")
             
-            st.success("Model created successfully!")
-            st.write("**Model Summary:**")
-            st.text(model.get_model_summary())
-            
-        except Exception as e:
-            st.error(f"Error creating model: {str(e)}")
+            if st.button("Create Model"):
+                model = VnexAIChatbot(
+                    vocab_size=vocab_size,
+                    embedding_dim=embedding_dim,
+                    hidden_dim=hidden_dim,
+                    max_length=max_length,
+                    learning_rate=learning_rate
+                )
+                st.session_state.chatbot_model = model
+                st.session_state.is_trained = False
+                st.success("Chatbot model created!")
+                
+                # Show model info
+                total_params = (
+                    model.embedding.size +
+                    model.Wxh_enc.size + model.Whh_enc.size + model.bh_enc.size +
+                    model.Wxh_dec.size + model.Whh_dec.size + model.bh_dec.size +
+                    model.Why.size + model.by.size
+                )
+                st.write(f"**Total parameters:** {total_params:,}")
 
 def training_section():
-    st.header("🎯 Model Training")
+    st.header("🎯 Train Your Chatbot")
     
-    if st.session_state.model is None:
+    if st.session_state.chatbot_model is None:
         st.warning("Please create a model first!")
         return
     
-    if st.session_state.X_train is None:
-        st.warning("Please preprocess data first!")
+    if st.session_state.tokenizer is None or st.session_state.training_data is None:
+        st.warning("Please set up tokenizer and training data first!")
         return
-    
-    # Training parameters
-    st.subheader("Training Configuration")
     
     col1, col2 = st.columns(2)
     with col1:
-        epochs = st.number_input("Number of epochs:", 1, 1000, 100)
-        batch_size = st.number_input("Batch size:", 1, 512, 32)
-    
+        epochs = st.number_input("Number of epochs:", 1, 1000, 100, 10)
     with col2:
-        use_validation = st.checkbox("Use validation data", value=True)
-        verbose = st.checkbox("Verbose training", value=True)
+        shuffle_data = st.checkbox("Shuffle data", value=True)
     
-    # Training progress placeholders
     progress_bar = st.progress(0)
     status_text = st.empty()
-    metrics_placeholder = st.empty()
-    chart_placeholder = st.empty()
+    loss_chart_placeholder = st.empty()
     
     if st.button("Start Training"):
-        try:
-            with st.spinner("Training in progress..."):
-                # Prepare data
-                X_val = st.session_state.X_val if use_validation else None
-                y_val = st.session_state.y_val if use_validation else None
+        model = st.session_state.chatbot_model
+        tokenizer = st.session_state.tokenizer
+        data = st.session_state.training_data
+        
+        losses = []
+        
+        with st.spinner("Training in progress..."):
+            for epoch in range(epochs):
+                epoch_losses = []
                 
-                # Custom training loop for real-time updates
-                model = st.session_state.model
-                X_train = st.session_state.X_train
-                y_train = st.session_state.y_train
+                # Shuffle data
+                if shuffle_data:
+                    indices = np.random.permutation(len(data))
+                    data_shuffled = [data[i] for i in indices]
+                else:
+                    data_shuffled = data
                 
-                # Training parameters
-                n_samples = X_train.shape[0]
-                n_batches = max(1, n_samples // batch_size)
-                
-                # Initialize history
-                history = {
-                    'loss': [],
-                    'accuracy': [],
-                    'val_loss': [],
-                    'val_accuracy': []
-                }
-                
-                # Training loop with real-time updates
-                for epoch in range(epochs):
-                    # Update progress
-                    progress = (epoch + 1) / epochs
-                    progress_bar.progress(progress)
-                    status_text.text(f"Epoch {epoch + 1}/{epochs}")
+                # Train on each pair
+                for conv in data_shuffled:
+                    # Encode sequences
+                    input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
+                    target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
                     
-                    # Shuffle data
-                    indices = np.random.permutation(n_samples)
-                    X_shuffled = X_train[indices]
-                    y_shuffled = y_train[indices]
-                    
-                    epoch_losses = []
-                    epoch_accuracies = []
-                    
-                    # Mini-batch training
-                    for i in range(n_batches):
-                        start_idx = i * batch_size
-                        end_idx = min((i + 1) * batch_size, n_samples)
-                        
-                        X_batch = X_shuffled[start_idx:end_idx]
-                        y_batch = y_shuffled[start_idx:end_idx]
-                        
-                        batch_loss, batch_accuracy = model.train_batch(X_batch, y_batch)
-                        epoch_losses.append(batch_loss)
-                        epoch_accuracies.append(batch_accuracy)
-                    
-                    # Compute epoch metrics
-                    avg_loss = np.mean(epoch_losses)
-                    avg_accuracy = np.mean(epoch_accuracies)
-                    
-                    history['loss'].append(avg_loss)
-                    history['accuracy'].append(avg_accuracy)
-                    
-                    # Validation metrics
-                    if X_val is not None:
-                        val_pred = model.predict(X_val)
-                        val_loss = model.compute_loss(y_val, val_pred)
-                        val_accuracy = model.compute_accuracy(y_val, val_pred)
-                        
-                        history['val_loss'].append(val_loss)
-                        history['val_accuracy'].append(val_accuracy)
-                    
-                    # Update metrics display every 10 epochs or at the end
-                    if epoch % 10 == 0 or epoch == epochs - 1:
-                        # Display current metrics
-                        if X_val is not None:
-                            metrics_text = f"Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_accuracy:.4f}"
-                        else:
-                            metrics_text = f"Loss: {avg_loss:.4f} | Accuracy: {avg_accuracy:.4f}"
-                        
-                        metrics_placeholder.text(metrics_text)
-                        
-                        # Update training plot
-                        if len(history['loss']) > 1:
-                            fig = plot_training_history(history)
-                            chart_placeholder.plotly_chart(fig, use_container_width=True, key="training_progress_chart")
+                    # Skip if too long
+                    if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
+                        loss = model.train_step(input_seq, target_seq)
+                        epoch_losses.append(loss)
                 
-                # Store training history
-                st.session_state.training_history = history
-                st.session_state.is_trained = True
+                avg_loss = np.mean(epoch_losses) if epoch_losses else 0
+                losses.append(avg_loss)
                 
-                # Update model's training history
-                model.training_history = history
+                # Update progress
+                progress = (epoch + 1) / epochs
+                progress_bar.progress(progress)
+                status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f}")
                 
-                st.success("Training completed successfully!")
-                
-        except Exception as e:
-            st.error(f"Error during training: {str(e)}")
-            progress_bar.empty()
-            status_text.empty()
-    
-    # Display training history if available
-    if st.session_state.training_history is not None:
-        st.subheader("Training History")
-        fig = plot_training_history(st.session_state.training_history)
-        st.plotly_chart(fig, use_container_width=True, key="training_history_chart")
+                # Update chart every 10 epochs
+                if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
+                    import plotly.graph_objects as go
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(y=losses, mode='lines', name='Training Loss'))
+                    fig.update_layout(title="Training Loss", xaxis_title="Epoch", yaxis_title="Loss")
+                    loss_chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"training_loss_{epoch}")
+            
+            model.training_history['loss'] = losses
+            st.session_state.is_trained = True
+            st.success("Training complete!")
 
-def evaluation_section():
-    st.header("📈 Model Evaluation")
+def chat_interface_section():
+    st.header("💬 Chat with Your AI")
     
     if not st.session_state.is_trained:
-        st.warning("Please train a model first!")
+        st.warning("Please train the model first!")
         return
     
-    if st.session_state.X_test is None:
-        st.warning("No test data available!")
-        return
+    model = st.session_state.chatbot_model
+    tokenizer = st.session_state.tokenizer
     
-    st.subheader("Test Set Performance")
+    # Chat history display
+    st.subheader("Conversation")
+    chat_container = st.container()
     
-    try:
-        model = st.session_state.model
-        preprocessor = st.session_state.preprocessor
-        X_test = st.session_state.X_test
-        y_test = st.session_state.y_test
-        
-        # Get class names for classification
-        class_names = None
-        if preprocessor.is_classification and 'target' in preprocessor.encoders:
-            class_names = preprocessor.encoders['target'].classes_.tolist()
-        
-        # Display performance metrics
-        display_model_performance(
-            model, X_test, y_test, 
-            preprocessor.is_classification, class_names
-        )
-        
-        # Additional analysis
-        st.subheader("Prediction Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Sample predictions
-            st.write("**Sample Predictions:**")
-            n_samples = min(10, len(X_test))
-            sample_indices = np.random.choice(len(X_test), n_samples, replace=False)
-            
-            y_pred = model.predict(X_test[sample_indices])
-            
-            if preprocessor.is_classification:
-                if len(y_pred.shape) > 1 and y_pred.shape[1] > 1:
-                    y_pred_classes = np.argmax(y_pred, axis=1)
-                    y_pred_probs = np.max(y_pred, axis=1)
-                else:
-                    y_pred_classes = y_pred.astype(int)
-                    y_pred_probs = None
-                
-                y_true_display = preprocessor.inverse_transform_target(y_test[sample_indices])
-                y_pred_display = preprocessor.inverse_transform_target(y_pred_classes)
-                
-                sample_df = pd.DataFrame({
-                    'True Label': y_true_display,
-                    'Predicted Label': y_pred_display,
-                })
-                
-                if y_pred_probs is not None:
-                    sample_df['Confidence'] = y_pred_probs.round(4)
-                
-                st.dataframe(sample_df)
-            
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            if msg['role'] == 'user':
+                st.markdown(f'<div class="chat-message user-message">👤 {msg["content"]}</div>', unsafe_allow_html=True)
             else:
-                sample_df = pd.DataFrame({
-                    'True Value': y_test[sample_indices].flatten(),
-                    'Predicted Value': y_pred.flatten().round(4),
-                    'Error': (y_test[sample_indices] - y_pred).flatten().round(4)
-                })
-                st.dataframe(sample_df)
-        
-        with col2:
-            # Feature importance (simple version based on weights)
-            st.write("**Feature Importance (First Layer Weights):**")
-            
-            if len(model.weights) > 0:
-                # Use absolute values of first layer weights as proxy for importance
-                feature_importance = np.abs(model.weights[0]).mean(axis=1)
-                feature_names = preprocessor.feature_names[:len(feature_importance)]
-                
-                importance_df = pd.DataFrame({
-                    'Feature': feature_names,
-                    'Importance': feature_importance
-                }).sort_values('Importance', ascending=False)
-                
-                # Show top 10 features
-                top_features = importance_df.head(10)
-                
-                fig = go.Figure([go.Bar(
-                    x=top_features['Importance'],
-                    y=top_features['Feature'],
-                    orientation='h'
-                )])
-                
-                fig.update_layout(
-                    title="Top 10 Feature Importance",
-                    xaxis_title="Average Absolute Weight",
-                    height=400
-                )
-                
-                st.plotly_chart(fig, use_container_width=True, key="feature_importance_chart")
+                st.markdown(f'<div class="chat-message bot-message">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
     
-    except Exception as e:
-        st.error(f"Error during evaluation: {str(e)}")
+    # Chat input
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        user_message = st.text_input("Your message:", key="chat_input")
+    with col2:
+        send_button = st.button("Send")
+    
+    if send_button and user_message:
+        # Add user message to history
+        st.session_state.chat_history.append({'role': 'user', 'content': user_message})
+        
+        # Generate response
+        input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
+        response_indices = model.generate_response(input_seq)
+        response_text = tokenizer.decode(response_indices.tolist())
+        
+        # Add bot response to history
+        st.session_state.chat_history.append({'role': 'bot', 'content': response_text})
+        
+        st.rerun()
+    
+    if st.button("Clear Chat"):
+        st.session_state.chat_history = []
+        st.rerun()
 
-def model_management_section():
-    st.header("💾 Model Management")
+def export_model_section():
+    st.header("💾 Export Your Chatbot")
+    
+    if st.session_state.chatbot_model is None:
+        st.warning("No model to export!")
+        return
+    
+    st.write("""
+    Export your trained VnexAI chatbot model as a .bin file. This file contains:
+    - All trained weights and biases
+    - Model architecture parameters
+    - Training history
+    """)
+    
+    model_name = st.text_input("Model name:", value="vnexai_chatbot")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Save Model")
-        
-        if st.session_state.model is not None:
-            model_name = st.text_input("Model name:", value="vnexai_model")
+        if st.button("Export Model (.bin)"):
+            model = st.session_state.chatbot_model
             
-            if st.button("Download Model"):
-                try:
-                    # Create a zip file with model and preprocessing info
-                    zip_buffer = io.BytesIO()
-                    
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        # Save model
-                        model_json = {
-                            'layers': st.session_state.model.layers,
-                            'learning_rate': st.session_state.model.learning_rate,
-                            'activation': st.session_state.model.activation,
-                            'output_activation': st.session_state.model.output_activation,
-                            'weights': [w.tolist() for w in st.session_state.model.weights],
-                            'biases': [b.tolist() for b in st.session_state.model.biases],
-                            'training_history': st.session_state.model.training_history
-                        }
-                        
-                        zip_file.writestr(f"{model_name}.json", json.dumps(model_json, indent=2))
-                        
-                        # Save preprocessing info
-                        if st.session_state.preprocessor is not None:
-                            preprocess_info = {
-                                'feature_names': st.session_state.preprocessor.feature_names,
-                                'target_name': st.session_state.preprocessor.target_name,
-                                'is_classification': st.session_state.preprocessor.is_classification,
-                                'num_classes': st.session_state.preprocessor.num_classes,
-                                'scalers': {k: {'mean_': v.mean_.tolist(), 'scale_': v.scale_.tolist()} 
-                                          for k, v in st.session_state.preprocessor.scalers.items()},
-                                'encoders': {k: {'classes_': v.classes_.tolist() if hasattr(v, 'classes_') else None}
-                                           for k, v in st.session_state.preprocessor.encoders.items() 
-                                           if hasattr(v, 'classes_')}
-                            }
-                            zip_file.writestr("preprocessing_info.json", json.dumps(preprocess_info, indent=2))
-                        
-                        # Save model summary
-                        summary = st.session_state.model.get_model_summary()
-                        zip_file.writestr("model_summary.txt", summary)
-                    
-                    zip_buffer.seek(0)
-                    
-                    st.download_button(
-                        label="📥 Download VnexAI Model",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"{model_name}.zip",
-                        mime="application/zip"
-                    )
-                    
-                    st.success("Model package created successfully!")
-                
-                except Exception as e:
-                    st.error(f"Error saving model: {str(e)}")
-        else:
-            st.info("No model available to save. Please create and train a model first.")
+            # Save to bytes
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                model.save_model(tmp.name)
+                with open(tmp.name, 'rb') as f:
+                    model_bytes = f.read()
+            
+            st.download_button(
+                label="Download Model.bin",
+                data=model_bytes,
+                file_name=f"{model_name}.bin",
+                mime="application/octet-stream"
+            )
+            st.success("Model ready for download!")
     
     with col2:
-        st.subheader("Load Model")
-        
-        uploaded_model = st.file_uploader("Upload VnexAI model (.zip)", type=['zip'])
-        
-        if uploaded_model is not None:
-            if st.button("Load Model"):
-                try:
-                    # Extract and load model
-                    zip_buffer = io.BytesIO(uploaded_model.read())
-                    
-                    with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-                        # Find model JSON file
-                        json_files = [f for f in zip_file.namelist() if f.endswith('.json') and 'preprocessing' not in f]
-                        
-                        if json_files:
-                            model_file = json_files[0]
-                            model_data = json.loads(zip_file.read(model_file).decode('utf-8'))
-                            
-                            # Create and load model
-                            model = VnexAI(
-                                layers=model_data['layers'],
-                                learning_rate=model_data['learning_rate'],
-                                activation=model_data['activation'],
-                                output_activation=model_data['output_activation']
-                            )
-                            
-                            model.weights = [np.array(w) for w in model_data['weights']]
-                            model.biases = [np.array(b) for b in model_data['biases']]
-                            model.training_history = model_data['training_history']
-                            
-                            st.session_state.model = model
-                            st.session_state.is_trained = True
-                            st.session_state.training_history = model_data['training_history']
-                            
-                            st.success("Model loaded successfully!")
-                            st.text(model.get_model_summary())
-                        else:
-                            st.error("No model file found in the uploaded zip.")
+        if st.button("Export Tokenizer (.bin)"):
+            if st.session_state.tokenizer:
+                tokenizer = st.session_state.tokenizer
                 
-                except Exception as e:
-                    st.error(f"Error loading model: {str(e)}")
+                # Save to bytes
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                    tokenizer.save(tmp.name)
+                    with open(tmp.name, 'rb') as f:
+                        tokenizer_bytes = f.read()
+                
+                st.download_button(
+                    label="Download Tokenizer.bin",
+                    data=tokenizer_bytes,
+                    file_name=f"{model_name}_tokenizer.bin",
+                    mime="application/octet-stream"
+                )
+                st.success("Tokenizer ready for download!")
     
-    # Model Information
-    if st.session_state.model is not None:
-        st.subheader("Current Model Information")
+    # Show model info
+    if st.session_state.chatbot_model:
+        st.subheader("Model Information")
+        model = st.session_state.chatbot_model
         
-        col1, col2 = st.columns(2)
+        info = {
+            "Vocabulary Size": model.vocab_size,
+            "Embedding Dimension": model.embedding_dim,
+            "Hidden Dimension": model.hidden_dim,
+            "Max Sequence Length": model.max_length,
+            "Learning Rate": model.learning_rate,
+            "Trained": "Yes" if st.session_state.is_trained else "No"
+        }
         
-        with col1:
-            st.text(st.session_state.model.get_model_summary())
+        st.json(info)
         
-        with col2:
-            if st.session_state.training_history is not None:
-                final_metrics = {
-                    'Final Training Loss': st.session_state.training_history['loss'][-1] if st.session_state.training_history['loss'] else 'N/A',
-                    'Final Training Accuracy': st.session_state.training_history['accuracy'][-1] if st.session_state.training_history['accuracy'] else 'N/A',
-                    'Total Epochs Trained': len(st.session_state.training_history['loss']),
-                }
-                
-                if st.session_state.training_history['val_loss']:
-                    final_metrics['Final Validation Loss'] = st.session_state.training_history['val_loss'][-1]
-                    final_metrics['Final Validation Accuracy'] = st.session_state.training_history['val_accuracy'][-1]
-                
-                st.write("**Training Statistics:**")
-                for key, value in final_metrics.items():
-                    if isinstance(value, float):
-                        st.write(f"- {key}: {value:.4f}")
-                    else:
-                        st.write(f"- {key}: {value}")
+        if st.session_state.is_trained and model.training_history['loss']:
+            st.write(f"**Final Training Loss:** {model.training_history['loss'][-1]:.4f}")
 
 if __name__ == "__main__":
     main()
