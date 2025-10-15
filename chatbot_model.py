@@ -1,7 +1,16 @@
-import numpy as np
 import json
 import pickle
 from typing import List, Dict, Tuple, Optional
+
+# GPU Support - Try CuPy first, fallback to NumPy
+try:
+    import cupy as np
+    GPU_AVAILABLE = True
+    DEVICE = "GPU"
+except ImportError:
+    import numpy as np
+    GPU_AVAILABLE = False
+    DEVICE = "CPU"
 
 class VnexAIChatbot:
     """
@@ -25,6 +34,8 @@ class VnexAIChatbot:
         self.hidden_dim = hidden_dim
         self.max_length = max_length
         self.learning_rate = learning_rate
+        self.device = DEVICE
+        self.gpu_available = GPU_AVAILABLE
         
         # Initialize weights
         self._initialize_weights()
@@ -34,6 +45,13 @@ class VnexAIChatbot:
             'loss': [],
             'perplexity': []
         }
+    
+    def get_device_info(self) -> str:
+        """Get information about the device being used"""
+        if self.gpu_available:
+            return f"🚀 GPU Acceleration ACTIVE ({np.__name__})"
+        else:
+            return f"💻 CPU Mode ({np.__name__})"
     
     def _initialize_weights(self):
         """Initialize all model weights"""
@@ -294,6 +312,20 @@ class VnexAIChatbot:
         
         return np.array(response_tokens)
     
+    def _to_cpu(self, array):
+        """Convert array to CPU (NumPy) for saving"""
+        if GPU_AVAILABLE and hasattr(array, 'get'):
+            return array.get()  # CuPy to NumPy
+        return array
+    
+    def _to_device(self, array):
+        """Convert array to current device"""
+        if GPU_AVAILABLE:
+            import cupy as cp
+            if not isinstance(array, cp.ndarray):
+                return cp.array(array)
+        return array
+    
     def save_model(self, filepath: str):
         """Save model to binary file"""
         model_data = {
@@ -302,15 +334,15 @@ class VnexAIChatbot:
             'hidden_dim': self.hidden_dim,
             'max_length': self.max_length,
             'learning_rate': self.learning_rate,
-            'embedding': self.embedding,
-            'Wxh_enc': self.Wxh_enc,
-            'Whh_enc': self.Whh_enc,
-            'bh_enc': self.bh_enc,
-            'Wxh_dec': self.Wxh_dec,
-            'Whh_dec': self.Whh_dec,
-            'bh_dec': self.bh_dec,
-            'Why': self.Why,
-            'by': self.by,
+            'embedding': self._to_cpu(self.embedding),
+            'Wxh_enc': self._to_cpu(self.Wxh_enc),
+            'Whh_enc': self._to_cpu(self.Whh_enc),
+            'bh_enc': self._to_cpu(self.bh_enc),
+            'Wxh_dec': self._to_cpu(self.Wxh_dec),
+            'Whh_dec': self._to_cpu(self.Whh_dec),
+            'bh_dec': self._to_cpu(self.bh_dec),
+            'Why': self._to_cpu(self.Why),
+            'by': self._to_cpu(self.by),
             'training_history': self.training_history
         }
         
@@ -329,13 +361,14 @@ class VnexAIChatbot:
         self.max_length = model_data['max_length']
         self.learning_rate = model_data['learning_rate']
         
-        self.embedding = model_data['embedding']
-        self.Wxh_enc = model_data['Wxh_enc']
-        self.Whh_enc = model_data['Whh_enc']
-        self.bh_enc = model_data['bh_enc']
-        self.Wxh_dec = model_data['Wxh_dec']
-        self.Whh_dec = model_data['Whh_dec']
-        self.bh_dec = model_data['bh_dec']
-        self.Why = model_data['Why']
-        self.by = model_data['by']
+        # Convert to appropriate device (GPU if available)
+        self.embedding = self._to_device(model_data['embedding'])
+        self.Wxh_enc = self._to_device(model_data['Wxh_enc'])
+        self.Whh_enc = self._to_device(model_data['Whh_enc'])
+        self.bh_enc = self._to_device(model_data['bh_enc'])
+        self.Wxh_dec = self._to_device(model_data['Wxh_dec'])
+        self.Whh_dec = self._to_device(model_data['Whh_dec'])
+        self.bh_dec = self._to_device(model_data['bh_dec'])
+        self.Why = self._to_device(model_data['Why'])
+        self.by = self._to_device(model_data['by'])
         self.training_history = model_data['training_history']

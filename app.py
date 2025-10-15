@@ -141,7 +141,7 @@ def data_upload_section():
                     else:
                         st.session_state.training_data = raw_data
                 
-                else:  # txt file
+                elif uploaded_file.name.endswith('.txt'):  # txt file
                     content = uploaded_file.read().decode('utf-8')
                     data = []
                     
@@ -187,17 +187,78 @@ def data_upload_section():
                     if not parsed_json:
                         lines = content.split('\n')
                         for line in lines:
-                            if '|' in line:
-                                parts = line.split('|')
-                                if len(parts) == 2:
-                                    user_text = parts[0].replace('user:', '').strip()
-                                    bot_text = parts[1].replace('bot:', '').strip()
-                                    data.append({'user': user_text, 'bot': bot_text})
+                            # Try different separators: |, →, -, tab
+                            for sep in ['|', '→', '\t', ' - ']:
+                                if sep in line:
+                                    parts = line.split(sep, 1)
+                                    if len(parts) == 2:
+                                        user_text = parts[0].strip()
+                                        bot_text = parts[1].strip()
+                                        
+                                        # Remove common labels
+                                        for label in ['user:', 'question:', 'input:', 'q:', 'human:']:
+                                            if user_text.lower().startswith(label):
+                                                user_text = user_text[len(label):].strip()
+                                                break
+                                        
+                                        for label in ['bot:', 'answer:', 'output:', 'a:', 'assistant:', 'response:']:
+                                            if bot_text.lower().startswith(label):
+                                                bot_text = bot_text[len(label):].strip()
+                                                break
+                                        
+                                        data.append({'user': user_text, 'bot': bot_text})
+                                        break
                     
                     st.session_state.training_data = data
                     
                     if parsed_json:
                         st.info(f"Detected code debugging format in text file. Converted to {len(data)} training pairs.")
+                
+                elif uploaded_file.name.endswith('.csv') or uploaded_file.name.endswith('.tsv'):
+                    # Handle CSV/TSV files
+                    import csv
+                    import io
+                    
+                    content = uploaded_file.read().decode('utf-8')
+                    delimiter = '\t' if uploaded_file.name.endswith('.tsv') else ','
+                    
+                    reader = csv.DictReader(io.StringIO(content), delimiter=delimiter)
+                    data = []
+                    
+                    for row in reader:
+                        # Try to find user/bot columns with various names
+                        user_text = None
+                        bot_text = None
+                        
+                        # Check for user column
+                        for key in row.keys():
+                            key_lower = key.lower().strip()
+                            if key_lower in ['user', 'question', 'input', 'q', 'prompt', 'human']:
+                                if row[key]:
+                                    user_text = row[key].strip()
+                                break
+                        
+                        # Check for bot column
+                        for key in row.keys():
+                            key_lower = key.lower().strip()
+                            if key_lower in ['bot', 'answer', 'output', 'a', 'response', 'assistant', 'reply']:
+                                if row[key]:
+                                    bot_text = row[key].strip()
+                                break
+                        
+                        # If no headers matched, use first two columns
+                        if user_text is None or bot_text is None:
+                            cols = list(row.values())
+                            if len(cols) >= 2:
+                                if cols[0]:
+                                    user_text = cols[0].strip()
+                                if cols[1]:
+                                    bot_text = cols[1].strip()
+                        
+                        if user_text and bot_text:
+                            data.append({'user': user_text, 'bot': bot_text})
+                    
+                    st.session_state.training_data = data
                 
                 st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
                 
@@ -307,6 +368,9 @@ def model_setup_section():
                 st.session_state.chatbot_model = model
                 st.session_state.is_trained = False
                 st.success("Chatbot model created!")
+                
+                # Show device info
+                st.info(model.get_device_info())
                 
                 # Show model info
                 total_params = (

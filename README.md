@@ -5,10 +5,11 @@ Train custom chatbot models from scratch using NumPy and export as .bin files!
 ## Features
 
 ✅ **Train from scratch** - Build your own AI chatbot with custom neural networks  
-✅ **Multiple data formats** - Supports conversation data and code debugging data  
+✅ **GPU Acceleration** - Automatically uses GPU (CuPy) if available, falls back to CPU (NumPy)  
+✅ **Multiple data formats** - JSON, CSV, TSV, JSONL, text files with various separators  
 ✅ **Export as .bin** - Download trained model and tokenizer as binary files  
 ✅ **Chat interface** - Test your chatbot in real-time  
-✅ **No dependencies** - Pure NumPy implementation (educational & transparent)
+✅ **Flexible architecture** - Pure NumPy/CuPy implementation (educational & transparent)
 
 ## Supported Data Formats
 
@@ -41,9 +42,26 @@ Train custom chatbot models from scratch using NumPy and export as .bin files!
 ```
 
 ### 4. Line-by-Line Format (Text File)
+Supports multiple separators: `|`, `→`, `-`, tab
 ```
 user: Hello | bot: Hi there!
-user: How are you? | bot: I'm great!
+question: How are you? → answer: I'm great!
+input: What's your name? - output: I'm VnexAI!
+Q: Tell me a joke       A: Why did the chicken cross the road?
+```
+
+### 5. CSV/TSV Format
+Headers can be: user/bot, question/answer, input/output, q/a, prompt/response, etc.
+```csv
+user,bot
+Hello,Hi there!
+How are you?,I'm great!
+```
+
+### 6. JSONL (JSON Lines) Format
+```jsonl
+{"user": "Hello", "bot": "Hi there!"}
+{"user": "How are you?", "bot": "I'm great!"}
 ```
 
 ## Quick Start
@@ -91,12 +109,26 @@ If you have code debugging data (like the provided example), the app will:
 3. **Train** the chatbot to learn code fixing patterns
 4. **Export** as .bin for deployment
 
+## GPU Acceleration
+
+VnexAI automatically detects and uses GPU when available:
+
+- **GPU Mode**: Uses CuPy for GPU-accelerated training (much faster!)
+- **CPU Mode**: Falls back to NumPy if no GPU is available
+- **Automatic**: No configuration needed - just run the app!
+
+When you create a model, the app will show:
+- 🚀 **GPU Acceleration ACTIVE** - Training on GPU
+- 💻 **CPU Mode** - Training on CPU
+
+Training on GPU can be **10-100x faster** depending on your hardware!
+
 ## Model Architecture
 
 - **Type**: Sequence-to-sequence RNN (Encoder-Decoder)
 - **Encoder**: Processes input text into hidden representation
 - **Decoder**: Generates response token by token
-- **Implementation**: Pure NumPy (no PyTorch/TensorFlow)
+- **Implementation**: Pure NumPy/CuPy (GPU support included)
 - **Export Format**: Pickle binary (.bin files)
 
 ## File Outputs
