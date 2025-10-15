@@ -345,6 +345,50 @@ class VnexAIChatbot:
         self.update_weights(gradients)
         return loss
     
+    def train_batch(self, input_seqs: list, target_seqs: list) -> float:
+        """Batch training step - processes multiple samples at once for GPU efficiency"""
+        batch_size = len(input_seqs)
+        total_loss = 0.0
+        
+        # Initialize accumulated gradients
+        accumulated_grads = {
+            'dWxh_enc': np.zeros_like(self.Wxh_enc),
+            'dWhh_enc': np.zeros_like(self.Whh_enc),
+            'dbh_enc': np.zeros_like(self.bh_enc),
+            'dWxh_dec': np.zeros_like(self.Wxh_dec),
+            'dWhh_dec': np.zeros_like(self.Whh_dec),
+            'dbh_dec': np.zeros_like(self.bh_dec),
+            'dWhy': np.zeros_like(self.Why),
+            'dby': np.zeros_like(self.by),
+            'dembedding': np.zeros_like(self.embedding)
+        }
+        
+        # Process each sample in the batch
+        for input_seq, target_seq in zip(input_seqs, target_seqs):
+            # Forward pass
+            outputs, encoder_hidden, decoder_hidden_states = self.forward(input_seq, target_seq)
+            
+            # Compute loss
+            loss = self.compute_loss(outputs, target_seq)
+            total_loss += loss
+            
+            # Backward pass
+            gradients = self.backward(input_seq, target_seq, outputs, encoder_hidden, decoder_hidden_states)
+            
+            # Accumulate gradients
+            for key in accumulated_grads:
+                accumulated_grads[key] += gradients[key]
+        
+        # Average gradients across batch
+        for key in accumulated_grads:
+            accumulated_grads[key] /= batch_size
+        
+        # Update weights with averaged gradients
+        self.update_weights(accumulated_grads)
+        
+        # Return average loss
+        return total_loss / batch_size
+    
     def generate_response(self, input_seq: np.ndarray) -> np.ndarray:
         """Generate a response for given input"""
         encoder_hidden = self.encode(input_seq)
