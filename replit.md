@@ -1,8 +1,8 @@
-# VnexAI - Custom Neural Network Builder
+# VnexAI - Custom Chatbot Training Platform
 
 ## Overview
 
-VnexAI is a custom neural network framework built from scratch using NumPy, with a Streamlit-based web interface for building, training, and evaluating neural networks. The application enables users to upload datasets, automatically preprocess data, configure custom neural network architectures, train models, and visualize results through interactive plots and performance metrics. The framework supports both classification and regression tasks with automatic problem type detection and feature engineering.
+VnexAI is a custom chatbot training platform built from scratch using NumPy, with a Streamlit-based web interface. The application enables users to train conversational AI models and code debugging assistants on custom datasets. Users can upload conversation data or code debugging data, configure the neural network architecture, train the model from scratch, test it in a chat interface, and export the trained model as a .bin file for deployment.
 
 ## User Preferences
 
@@ -14,51 +14,57 @@ Preferred communication style: Simple, everyday language.
 
 **Technology**: Streamlit web framework with interactive widgets and real-time updates
 
-**Design Pattern**: Session state management for persisting model, preprocessor, and dataset objects across user interactions
+**Design Pattern**: Session state management for persisting model, tokenizer, and training data across user interactions
 
 **Key Features**:
-- Wide layout configuration with expandable sidebar for configuration options
-- Custom CSS styling for enhanced visual presentation
-- Interactive plotly-based visualizations for training metrics and model performance
-- Multi-step workflow: data upload → preprocessing → architecture design → training → evaluation
+- Wide layout configuration with expandable sidebar for navigation
+- Custom CSS styling for chat interface and visual presentation
+- Interactive plotly-based visualizations for training loss curves
+- Multi-step workflow: data upload → model setup → training → chat interface → export
 
-**Rationale**: Streamlit provides rapid prototyping for ML applications with minimal frontend code while maintaining interactivity. Session state prevents data loss during user navigation and interactions.
+**Supported Data Formats**:
+- Standard conversation JSON: `[{"user": "...", "bot": "..."}, ...]`
+- Code debugging JSON: Objects with `original_src` and `changed_src` fields
+- Numbered JSON text format: `0:{...} 1:{...}` style entries
+- Line-by-line text: `user: ... | bot: ...`
+
+**Rationale**: Streamlit provides rapid prototyping for chatbot applications with minimal frontend code while maintaining interactivity. Session state prevents data loss during user navigation and interactions.
 
 ### Backend Architecture
 
 **Core Components**:
 
-1. **VnexAI Neural Network Engine** (`vnexai.py`)
-   - Pure NumPy implementation of feedforward neural networks
-   - Custom gradient descent optimization
-   - Configurable layer architectures and activation functions
-   - Xavier weight initialization for stable training
-   - Support for multiple activation functions (ReLU, sigmoid, tanh) and output types (softmax, sigmoid, linear)
+1. **VnexAI Chatbot Model** (`chatbot_model.py`)
+   - Pure NumPy implementation of sequence-to-sequence architecture
+   - Encoder-decoder RNN for conversation modeling
+   - Custom gradient descent optimization with backpropagation through time
+   - Configurable embedding and hidden dimensions
+   - Supports text generation with autoregressive decoding
+   - Binary (.bin) model export using pickle serialization
 
-2. **Data Preprocessor** (`data_preprocessor.py`)
-   - Automatic feature type detection (numerical vs categorical)
-   - Automatic problem type detection (classification vs regression)
-   - Sklearn-based preprocessing pipelines
-   - StandardScaler for numerical features
-   - Label encoding and one-hot encoding for categorical features
-   - Train/validation/test split functionality
+2. **Chatbot Tokenizer** (`chatbot_tokenizer.py`)
+   - Vocabulary building from training text
+   - Text tokenization with special tokens (<PAD>, <START>, <END>, <UNK>)
+   - Encode/decode functionality for text ↔ token indices conversion
+   - Configurable vocabulary size with frequency-based selection
+   - Binary (.bin) tokenizer export for deployment
 
-3. **Utility Module** (`utils.py`)
-   - Training history visualization with Plotly subplots
-   - Model performance metrics and displays
-   - Confusion matrices for classification
-   - Regression metrics (MSE, R², MAE)
-   - Architecture diagram generation
-   - Dataset validation
-   - Recommended architecture suggestions
+3. **Data Processing** (`app.py`)
+   - Multi-format data loading (JSON, text files)
+   - Code debugging format converter (original_src → changed_src)
+   - Numbered JSON entry parser
+   - Automatic format detection and conversion
+   - Training data preview and validation
 
 **Design Decisions**:
 
-- **NumPy-only neural network**: Provides educational value and full control over implementation without framework dependencies. Trade-off is slower training compared to optimized frameworks like TensorFlow/PyTorch.
+- **NumPy-only implementation**: Provides full control and transparency over the model architecture without framework dependencies. Educational value for understanding chatbot mechanics from scratch.
 
-- **Modular architecture**: Separation of concerns between data preprocessing, model training, and visualization enables independent testing and future extensibility.
+- **Sequence-to-sequence architecture**: Simple RNN-based encoder-decoder enables conversation modeling and code transformation tasks.
 
-- **Automatic detection**: Reduces user configuration burden by intelligently detecting problem types and feature characteristics, improving user experience for non-technical users.
+- **Flexible data formats**: Supports both conversational chatbots and code debugging assistants by auto-converting different data formats to user-bot pairs.
+
+- **Binary export**: .bin file format (pickle) enables easy model deployment and sharing for use with other platforms.
 
 ### Data Processing Pipeline
 

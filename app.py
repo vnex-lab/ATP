@@ -53,7 +53,7 @@ if 'chat_history' not in st.session_state:
 def main():
     # Main title
     st.markdown('<h1 class="main-header">🤖 VnexAI Chatbot</h1>', unsafe_allow_html=True)
-    st.markdown("Train your own conversational AI from scratch and export as .bin!")
+    st.markdown("Train your own AI chatbot from scratch - supports conversation & code debugging! Export as .bin!")
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
@@ -78,7 +78,8 @@ def data_upload_section():
     
     st.write("""
     Upload your conversation training data. Supported formats:
-    - **JSON**: `[{"user": "Hello", "bot": "Hi there!"}, ...]`
+    - **JSON Conversation**: `[{"user": "Hello", "bot": "Hi there!"}, ...]`
+    - **JSON Code Debugging**: Array with `original_src` and `changed_src` fields
     - **Text**: Each line as `user: Hello | bot: Hi there!`
     """)
     
@@ -90,19 +91,98 @@ def data_upload_section():
         if uploaded_file is not None:
             try:
                 if uploaded_file.name.endswith('.json'):
-                    data = json.load(uploaded_file)
-                    st.session_state.training_data = data
+                    raw_data = json.load(uploaded_file)
+                    
+                    # Check if it's code debugging format
+                    if isinstance(raw_data, list) and len(raw_data) > 0:
+                        first_item = raw_data[0]
+                        
+                        # Code debugging format detection
+                        if 'original_src' in first_item and 'changed_src' in first_item:
+                            data = []
+                            for item in raw_data:
+                                # Extract fields
+                                language = item.get('language', 'code')
+                                status = item.get('original_status', 'error')
+                                original = item.get('original_src', '')
+                                fixed = item.get('changed_src', '')
+                                
+                                if original and fixed:
+                                    # Create user-bot pair
+                                    user_msg = f"Fix this {language} code with {status}: {original}"
+                                    bot_msg = fixed
+                                    data.append({'user': user_msg, 'bot': bot_msg})
+                            
+                            st.session_state.training_data = data
+                            st.info(f"Detected code debugging format. Converted to {len(data)} training pairs.")
+                        
+                        # Standard conversation format
+                        elif 'user' in first_item and 'bot' in first_item:
+                            st.session_state.training_data = raw_data
+                        
+                        else:
+                            st.error("Unknown JSON format. Please use conversation format or code debugging format.")
+                            return
+                    else:
+                        st.session_state.training_data = raw_data
+                
                 else:  # txt file
-                    lines = uploaded_file.read().decode('utf-8').split('\n')
+                    content = uploaded_file.read().decode('utf-8')
                     data = []
-                    for line in lines:
-                        if '|' in line:
-                            parts = line.split('|')
-                            if len(parts) == 2:
-                                user_text = parts[0].replace('user:', '').strip()
-                                bot_text = parts[1].replace('bot:', '').strip()
-                                data.append({'user': user_text, 'bot': bot_text})
+                    
+                    # Try to parse as numbered JSON entries (0:{...}, 1:{...})
+                    import re
+                    entries = re.split(r'\n\d+:\{', content)
+                    
+                    parsed_json = False
+                    for i, entry in enumerate(entries):
+                        if not entry.strip():
+                            continue
+                        
+                        # Add back the opening brace if it's not the first entry
+                        if i > 0:
+                            entry = '{' + entry
+                        else:
+                            if not entry.strip().startswith('{'):
+                                continue
+                        
+                        # Try to parse as JSON
+                        try:
+                            last_brace = entry.rfind('}')
+                            if last_brace != -1:
+                                json_str = entry[:last_brace + 1]
+                                obj = json.loads(json_str)
+                                
+                                # Check if it's code debugging format
+                                if 'original_src' in obj and 'changed_src' in obj:
+                                    language = obj.get('language', 'code')
+                                    status = obj.get('original_status', 'error')
+                                    original = obj.get('original_src', '')
+                                    fixed = obj.get('changed_src', '')
+                                    
+                                    if original and fixed:
+                                        user_msg = f"Fix this {language} code with {status}: {original}"
+                                        bot_msg = fixed
+                                        data.append({'user': user_msg, 'bot': bot_msg})
+                                        parsed_json = True
+                        except:
+                            continue
+                    
+                    # If no JSON was parsed, try line-by-line format
+                    if not parsed_json:
+                        lines = content.split('\n')
+                        for line in lines:
+                            if '|' in line:
+                                parts = line.split('|')
+                                if len(parts) == 2:
+                                    user_text = parts[0].replace('user:', '').strip()
+                                    bot_text = parts[1].replace('bot:', '').strip()
+                                    data.append({'user': user_text, 'bot': bot_text})
+                    
                     st.session_state.training_data = data
+                    
+                    if parsed_json:
+                        st.info(f"Detected code debugging format in text file. Converted to {len(data)} training pairs.")
                 
                 st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
                 
