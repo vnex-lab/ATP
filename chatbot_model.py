@@ -4,10 +4,20 @@ from typing import List, Dict, Tuple, Optional
 
 # GPU Support - Try CuPy first, fallback to NumPy
 try:
-    import cupy as np
-    GPU_AVAILABLE = True
-    DEVICE = "GPU"
+    import cupy as cp
+    # Test if GPU is actually usable
+    try:
+        _ = cp.array([1, 2, 3])
+        np = cp
+        GPU_AVAILABLE = True
+        DEVICE = "GPU"
+    except Exception:
+        # CuPy installed but GPU not usable (driver issues, etc.)
+        import numpy as np
+        GPU_AVAILABLE = False
+        DEVICE = "CPU"
 except ImportError:
+    # CuPy not installed
     import numpy as np
     GPU_AVAILABLE = False
     DEVICE = "CPU"
