@@ -3,6 +3,7 @@ import numpy as np
 import json
 import io
 from chatbot_model import VnexAIChatbot
+from transformer_model import TransformerChatbot
 from chatbot_tokenizer import ChatbotTokenizer
 
 # Set page configuration
@@ -352,6 +353,14 @@ def model_setup_section():
             vocab_size = st.session_state.tokenizer.vocab_size
             st.write(f"**Vocabulary Size:** {vocab_size}")
             
+            # Architecture selection
+            st.write("### 🧠 Choose Architecture:")
+            model_type = st.radio(
+                "Model Type:",
+                ["RNN (Fast, Basic)", "Transformer (Smart, Like ChatGPT!)"],
+                help="RNN is faster but basic. Transformer is MUCH smarter (uses attention like ChatGPT)!"
+            )
+            
             # MASSIVE limits for big GPUs! 🚀
             st.write("**🔥 GPU Size Guide:**")
             st.write("- **GTX 1650 (4GB)**: embed=512, hidden=1024")
@@ -361,20 +370,50 @@ def model_setup_section():
             
             embedding_dim = st.number_input("Embedding dimension:", 32, 16384, 128, 32, 
                                            help="Token embedding size. Bigger = smarter but needs more VRAM!")
-            hidden_dim = st.number_input("Hidden dimension:", 64, 32768, 256, 64,
-                                        help="RNN hidden state size. Bigger = more memory but smarter!")
-            max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
-            learning_rate = st.number_input("Learning rate:", 0.001, 0.1, 0.01, 0.001, format="%.3f")
             
-            # Calculate approximate parameters
-            approx_params = (
-                vocab_size * embedding_dim +  # Embedding
-                embedding_dim * hidden_dim * 2 +  # Encoder Wxh, Decoder Wxh
-                hidden_dim * hidden_dim * 2 +  # Encoder Whh, Decoder Whh
-                hidden_dim * 4 +  # Biases
-                hidden_dim * vocab_size +  # Output layer
-                vocab_size  # Output bias
-            )
+            if "RNN" in model_type:
+                # RNN parameters
+                hidden_dim = st.number_input("Hidden dimension:", 64, 32768, 256, 64,
+                                            help="RNN hidden state size. Bigger = more memory but smarter!")
+                max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
+                learning_rate = st.number_input("Learning rate:", 0.001, 0.1, 0.01, 0.001, format="%.3f")
+                
+                # Calculate approximate parameters for RNN
+                approx_params = (
+                    vocab_size * embedding_dim +  # Embedding
+                    embedding_dim * hidden_dim * 2 +  # Encoder Wxh, Decoder Wxh
+                    hidden_dim * hidden_dim * 2 +  # Encoder Whh, Decoder Whh
+                    hidden_dim * 4 +  # Biases
+                    hidden_dim * vocab_size +  # Output layer
+                    vocab_size  # Output bias
+                )
+            else:
+                # Transformer parameters
+                num_heads = st.number_input("Number of attention heads:", 1, 32, 8, 1,
+                                           help="More heads = better attention! Must divide embed_dim evenly")
+                num_layers = st.number_input("Number of layers:", 1, 24, 4, 1,
+                                            help="Deeper = smarter! ChatGPT uses 12+ layers")
+                ff_dim = st.number_input("Feed-forward dimension:", 128, 65536, 1024, 128,
+                                        help="Internal processing size. Usually 4x embedding_dim")
+                max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
+                learning_rate = st.number_input("Learning rate:", 0.0001, 0.01, 0.001, 0.0001, format="%.4f")
+                
+                # Calculate approximate parameters for Transformer
+                # Each attention layer has Wq, Wk, Wv, Wo (4 * embed_dim^2)
+                # Each FF layer has 2 weight matrices (embed_dim * ff_dim * 2)
+                # Layer norms, etc.
+                attn_params_per_layer = 4 * (embedding_dim * embedding_dim)
+                ff_params_per_layer = (embedding_dim * ff_dim) + (ff_dim * embedding_dim)
+                encoder_params = num_layers * (attn_params_per_layer + ff_params_per_layer)
+                decoder_params = num_layers * (2 * attn_params_per_layer + ff_params_per_layer)  # Self + cross attention
+                
+                approx_params = (
+                    vocab_size * embedding_dim +  # Embedding
+                    encoder_params +
+                    decoder_params +
+                    embedding_dim * vocab_size +  # Output layer
+                    vocab_size  # Output bias
+                )
             
             # Estimate VRAM usage (4 bytes per float32)
             vram_mb = (approx_params * 4) / (1024 * 1024)
@@ -389,27 +428,53 @@ def model_setup_section():
                 st.error(f"🔥 {approx_params/1e9:.1f}B params - MASSIVE! RTX 4090/5090 recommended!")
             
             if st.button("Create Model"):
-                model = VnexAIChatbot(
-                    vocab_size=vocab_size,
-                    embedding_dim=embedding_dim,
-                    hidden_dim=hidden_dim,
-                    max_length=max_length,
-                    learning_rate=learning_rate
-                )
+                if "RNN" in model_type:
+                    model = VnexAIChatbot(
+                        vocab_size=vocab_size,
+                        embedding_dim=embedding_dim,
+                        hidden_dim=hidden_dim,
+                        max_length=max_length,
+                        learning_rate=learning_rate
+                    )
+                    st.session_state.model_type = "RNN"
+                    
+                    # Show actual model info
+                    total_params = (
+                        model.embedding.size +
+                        model.Wxh_enc.size + model.Whh_enc.size + model.bh_enc.size +
+                        model.Wxh_dec.size + model.Whh_dec.size + model.bh_dec.size +
+                        model.Why.size + model.by.size
+                    )
+                else:
+                    # Check if heads divide evenly
+                    if embedding_dim % num_heads != 0:
+                        st.error(f"Embedding dim ({embedding_dim}) must be divisible by num heads ({num_heads})!")
+                        return
+                    
+                    model = TransformerChatbot(
+                        vocab_size=vocab_size,
+                        embed_dim=embedding_dim,
+                        num_heads=num_heads,
+                        num_layers=num_layers,
+                        ff_dim=ff_dim,
+                        max_seq_len=max_length,
+                        learning_rate=learning_rate
+                    )
+                    st.session_state.model_type = "Transformer"
+                    
+                    # Calculate actual params (done in model init)
+                    total_params = model._count_parameters()
+                
                 st.session_state.chatbot_model = model
                 st.session_state.is_trained = False
-                st.success("Chatbot model created!")
+                st.success(f"{'Transformer' if 'Transformer' in model_type else 'RNN'} model created!")
                 
-                # Show device info
-                st.info(model.get_device_info())
+                # Show device info (RNN has this method, Transformer has gpu_available)
+                if hasattr(model, 'get_device_info'):
+                    st.info(model.get_device_info())
+                else:
+                    st.info(f"GPU: {'✅ Enabled (CuPy)' if model.gpu_available else '❌ CPU Only (NumPy)'}")
                 
-                # Show actual model info
-                total_params = (
-                    model.embedding.size +
-                    model.Wxh_enc.size + model.Whh_enc.size + model.bh_enc.size +
-                    model.Wxh_dec.size + model.Whh_dec.size + model.bh_dec.size +
-                    model.Why.size + model.by.size
-                )
                 st.write(f"**✅ Actual Total Parameters:** {total_params:,} ({total_params/1e6:.1f}M)")
                 
                 # Show billion parameter milestone
@@ -462,7 +527,8 @@ def training_section():
             input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
             target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
             
-            if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < model.max_length:
+            max_len = model.max_length if hasattr(model, 'max_length') else model.max_seq_len
+            if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < max_len:
                 input_seqs_all.append(input_seq)
                 target_seqs_all.append(target_seq)
         
@@ -602,15 +668,20 @@ def chat_interface_section():
         st.session_state.chat_history.append({'role': 'user', 'content': user_message})
         
         # Generate response with anti-comma spam protection
-        input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
-        
         # Try generating up to 3 times if comma spam detected
         max_retries = 3
         response_text = ""
         
         for attempt in range(max_retries):
-            response_indices = model.generate_response(input_seq, temperature=temperature)
-            response_text = tokenizer.decode(response_indices.tolist())
+            # Check model type and use appropriate generate method
+            if hasattr(model, 'generate_response'):
+                # RNN model
+                input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
+                response_indices = model.generate_response(input_seq, temperature=temperature)
+                response_text = tokenizer.decode(response_indices.tolist())
+            else:
+                # Transformer model
+                response_text = model.generate(user_message, tokenizer, temperature=temperature)
             
             # Check for 3+ consecutive commas (spam detection)
             if ',,,' not in response_text:
@@ -658,7 +729,12 @@ def export_model_section():
             # Save to bytes
             import tempfile
             with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
-                model.save_model(tmp.name)
+                # Use appropriate save method based on model type
+                if hasattr(model, 'save_model'):
+                    model.save_model(tmp.name)  # RNN model
+                else:
+                    model.save(tmp.name)  # Transformer model
+                
                 with open(tmp.name, 'rb') as f:
                     model_bytes = f.read()
             
