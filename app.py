@@ -683,14 +683,15 @@ def chat_interface_section():
                 # Transformer model
                 response_text = model.generate(user_message, tokenizer, temperature=temperature)
             
-            # Check for 3+ consecutive commas (spam detection)
-            if ',,,' not in response_text:
+            # Check for 3+ consecutive commas or dots (spam detection)
+            if ',,,' not in response_text and '...' not in response_text:
                 # Good response, no spam!
                 break
             else:
-                # Comma spam detected! Increase temperature and retry
+                # Spam detected! Increase temperature and retry
+                spam_type = "comma" if ',,,' in response_text else "dot"
                 if attempt < max_retries - 1:
-                    print(f"⚠️ Comma spam detected (attempt {attempt + 1}), regenerating with higher temperature...")
+                    print(f"⚠️ {spam_type.capitalize()} spam detected (attempt {attempt + 1}), regenerating with higher temperature...")
                     temperature = min(temperature + 0.3, 2.0)  # Increase temperature
                 else:
                     print(f"⚠️ Still spam after {max_retries} attempts, using last response")
