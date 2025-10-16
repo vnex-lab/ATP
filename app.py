@@ -565,10 +565,28 @@ def chat_interface_section():
         # Add user message to history
         st.session_state.chat_history.append({'role': 'user', 'content': user_message})
         
-        # Generate response with temperature
+        # Generate response with anti-comma spam protection
         input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
-        response_indices = model.generate_response(input_seq, temperature=temperature)
-        response_text = tokenizer.decode(response_indices.tolist())
+        
+        # Try generating up to 3 times if comma spam detected
+        max_retries = 3
+        response_text = ""
+        
+        for attempt in range(max_retries):
+            response_indices = model.generate_response(input_seq, temperature=temperature)
+            response_text = tokenizer.decode(response_indices.tolist())
+            
+            # Check for 3+ consecutive commas (spam detection)
+            if ',,,' not in response_text:
+                # Good response, no spam!
+                break
+            else:
+                # Comma spam detected! Increase temperature and retry
+                if attempt < max_retries - 1:
+                    print(f"⚠️ Comma spam detected (attempt {attempt + 1}), regenerating with higher temperature...")
+                    temperature = min(temperature + 0.3, 2.0)  # Increase temperature
+                else:
+                    print(f"⚠️ Still spam after {max_retries} attempts, using last response")
         
         # Add bot response to history
         st.session_state.chat_history.append({'role': 'bot', 'content': response_text})
