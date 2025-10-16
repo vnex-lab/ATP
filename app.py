@@ -352,10 +352,41 @@ def model_setup_section():
             vocab_size = st.session_state.tokenizer.vocab_size
             st.write(f"**Vocabulary Size:** {vocab_size}")
             
-            embedding_dim = st.number_input("Embedding dimension:", 32, 512, 128, 32)
-            hidden_dim = st.number_input("Hidden dimension:", 64, 1024, 256, 64)
-            max_length = st.number_input("Max sequence length:", 10, 100, 50, 10)
+            # MASSIVE limits for big GPUs! 🚀
+            st.write("**🔥 GPU Size Guide:**")
+            st.write("- **GTX 1650 (4GB)**: embed=512, hidden=1024")
+            st.write("- **RTX 3060 (12GB)**: embed=1024, hidden=2048")
+            st.write("- **RTX 4090 (24GB)**: embed=4096, hidden=8192")
+            st.write("- **RTX 5090 (32GB+)**: embed=8192, hidden=16384+")
+            
+            embedding_dim = st.number_input("Embedding dimension:", 32, 16384, 128, 32, 
+                                           help="Token embedding size. Bigger = smarter but needs more VRAM!")
+            hidden_dim = st.number_input("Hidden dimension:", 64, 32768, 256, 64,
+                                        help="RNN hidden state size. Bigger = more memory but smarter!")
+            max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
             learning_rate = st.number_input("Learning rate:", 0.001, 0.1, 0.01, 0.001, format="%.3f")
+            
+            # Calculate approximate parameters
+            approx_params = (
+                vocab_size * embedding_dim +  # Embedding
+                embedding_dim * hidden_dim * 2 +  # Encoder Wxh, Decoder Wxh
+                hidden_dim * hidden_dim * 2 +  # Encoder Whh, Decoder Whh
+                hidden_dim * 4 +  # Biases
+                hidden_dim * vocab_size +  # Output layer
+                vocab_size  # Output bias
+            )
+            
+            # Estimate VRAM usage (4 bytes per float32)
+            vram_mb = (approx_params * 4) / (1024 * 1024)
+            
+            st.write(f"**📊 Estimated Parameters:** {approx_params:,} ({approx_params/1e6:.1f}M)")
+            st.write(f"**💾 Estimated VRAM:** ~{vram_mb:.0f}MB (model only)")
+            
+            # Warnings for big models
+            if approx_params > 100_000_000:
+                st.warning(f"⚠️ {approx_params/1e6:.0f}M params - BIG model! Make sure you have enough VRAM!")
+            if approx_params > 1_000_000_000:
+                st.error(f"🔥 {approx_params/1e9:.1f}B params - MASSIVE! RTX 4090/5090 recommended!")
             
             if st.button("Create Model"):
                 model = VnexAIChatbot(
@@ -372,14 +403,19 @@ def model_setup_section():
                 # Show device info
                 st.info(model.get_device_info())
                 
-                # Show model info
+                # Show actual model info
                 total_params = (
                     model.embedding.size +
                     model.Wxh_enc.size + model.Whh_enc.size + model.bh_enc.size +
                     model.Wxh_dec.size + model.Whh_dec.size + model.bh_dec.size +
                     model.Why.size + model.by.size
                 )
-                st.write(f"**Total parameters:** {total_params:,}")
+                st.write(f"**✅ Actual Total Parameters:** {total_params:,} ({total_params/1e6:.1f}M)")
+                
+                # Show billion parameter milestone
+                if total_params >= 1_000_000_000:
+                    st.balloons()
+                    st.success(f"🎉 CONGRATS! You built a {total_params/1e9:.2f}B parameter model!")
 
 def training_section():
     st.header("🎯 Train Your Chatbot")
@@ -394,10 +430,10 @@ def training_section():
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        epochs = st.number_input("Number of epochs:", 1, 1000, 100, 10)
+        epochs = st.number_input("Number of epochs:", 1, 10000, 100, 10)
     with col2:
-        batch_size = st.number_input("Batch size:", 1, 128, 32, 1, 
-                                      help="Higher batch size = faster GPU training! Try 32-64 for your GTX 1650")
+        batch_size = st.number_input("Batch size:", 1, 512, 32, 1, 
+                                      help="GTX 1650: 32-64 | RTX 3060: 64-128 | RTX 4090: 128-256 | RTX 5090: 256-512")
     with col3:
         shuffle_data = st.checkbox("Shuffle data", value=True)
     

@@ -76,10 +76,16 @@ How are you?,I'm great!
 - Navigate to **Model Setup**
 - Click **Build Vocabulary** to create word dictionary
 - Configure model parameters:
-  - Embedding dimension (default: 128)
-  - Hidden dimension (default: 256)
+  - Embedding dimension (32 to **16,384** - supports RTX 5090!)
+  - Hidden dimension (64 to **32,768** - massive models!)
   - Learning rate (default: 0.01)
+- **GPU Size Guide:**
+  - GTX 1650 (4GB): embed=512, hidden=1024
+  - RTX 3060 (12GB): embed=1024, hidden=2048
+  - RTX 4090 (24GB): embed=4096, hidden=8192
+  - RTX 5090 (32GB+): embed=8192, hidden=16384+
 - Click **Create Model**
+- App shows **parameter count** and **VRAM estimate**!
 
 ### 3. Train
 - Navigate to **Training**
@@ -132,6 +138,8 @@ Instead of training one conversation at a time, batch training processes multipl
 **Batch Size Recommendations:**
 - **GTX 1650 (4GB)**: Use batch size 32-64
 - **RTX 3060 (12GB)**: Use batch size 64-128
+- **RTX 4090 (24GB)**: Use batch size 128-256
+- **RTX 5090 (32GB+)**: Use batch size 256-512
 - **CPU Mode**: Use batch size 8-16
 
 **Why Batch Training Matters:**
