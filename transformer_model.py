@@ -124,15 +124,17 @@ class TransformerChatbot:
         return gamma * x_norm + beta
     
     def _multi_head_attention(self, Q, K, V, Wq, Wk, Wv, Wo, mask=None):
-        batch_size, seq_len, _ = Q.shape
+        batch_size, q_seq_len, _ = Q.shape
+        _, k_seq_len, _ = K.shape
+        _, v_seq_len, _ = V.shape
         
         Q_proj = self.xp.dot(Q, Wq)
         K_proj = self.xp.dot(K, Wk)
         V_proj = self.xp.dot(V, Wv)
         
-        Q_heads = Q_proj.reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        K_heads = K_proj.reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        V_heads = V_proj.reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        Q_heads = Q_proj.reshape(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        K_heads = K_proj.reshape(batch_size, k_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        V_heads = V_proj.reshape(batch_size, v_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         
         scores = self.xp.matmul(Q_heads, K_heads.transpose(0, 1, 3, 2)) / self.xp.sqrt(self.head_dim)
         
@@ -142,7 +144,7 @@ class TransformerChatbot:
         attn_weights = self._softmax(scores, axis=-1)
         
         attn_output = self.xp.matmul(attn_weights, V_heads)
-        attn_output = attn_output.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, self.embed_dim)
+        attn_output = attn_output.transpose(0, 2, 1, 3).reshape(batch_size, q_seq_len, self.embed_dim)
         
         output = self.xp.dot(attn_output, Wo)
         
