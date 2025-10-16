@@ -265,7 +265,7 @@ class TransformerChatbot:
         
         d_output_weights = self.xp.dot(decoder_output.reshape(-1, self.embed_dim).T, 
                                        d_logits.reshape(-1, self.vocab_size))
-        d_output_bias = self.xp.sum(d_logits, axis=(0, 1), keepdims=True)
+        d_output_bias = self.xp.sum(d_logits.reshape(-1, self.vocab_size), axis=0, keepdims=True)
         
         self.output_weights -= lr * d_output_weights
         self.output_bias -= lr * d_output_bias
