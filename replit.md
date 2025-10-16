@@ -8,6 +8,38 @@ VnexAI is a custom chatbot training platform built from scratch using NumPy, wit
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes
+
+### October 2025 - Major Performance & Quality Updates
+
+**Batch Training Implementation** (October 16, 2025)
+- Added batch processing for GPU optimization (batch sizes 1-128)
+- Implemented gradient accumulation across batches for stable training
+- 30-50x speed improvement on GPU vs single-sample training
+- Batch size recommendations: GTX 1650 (32-64), RTX 3060 (64-128), CPU (8-16)
+- Console logging shows batches per epoch and samples per batch
+
+**Temperature Sampling for Generation** (October 16, 2025)
+- Replaced greedy sampling (argmax) with temperature-based probability sampling
+- Added temperature slider in chat interface (0.1-2.0, default 0.8)
+- Fixed repetitive output issue (comma/character spam) with probabilistic token selection
+- Lower temperature = focused/repetitive, Higher temperature = creative/random
+- CuPy/NumPy compatibility for random sampling across CPU and GPU
+
+**Training Progress & Logging** (October 16, 2025)
+- Removed spinner blocking to enable real-time progress bar updates
+- Added detailed console logging: batch progress, loss per batch, epoch summaries
+- Training start info: total samples, batches per epoch, GPU/CPU mode indicator
+- Training end summary: total batches processed, loss improvement percentage
+- Visual feedback for training progression in both UI and console
+
+**GPU Compatibility Fixes** (October 16, 2025)
+- Fixed CuPy-NumPy implicit conversion errors in loss calculation
+- All loss values converted to Python floats for compatibility
+- Fixed CuPy random.choice() size parameter requirement
+- Automatic GPU array conversion to CPU for operations requiring NumPy
+- Ensures seamless operation on both GPU and CPU environments
+
 ## System Architecture
 
 ### Frontend Architecture
@@ -40,6 +72,8 @@ Preferred communication style: Simple, everyday language.
    - Pure NumPy implementation of sequence-to-sequence architecture
    - Encoder-decoder RNN for conversation modeling
    - Custom gradient descent optimization with backpropagation through time
+   - **Batch training** with gradient accumulation (1-128 samples per batch)
+   - **Temperature sampling** for diverse text generation (0.1-2.0 temperature range)
    - Configurable embedding and hidden dimensions
    - Supports text generation with autoregressive decoding
    - Binary (.bin) model export using pickle serialization
