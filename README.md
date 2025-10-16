@@ -4,12 +4,14 @@ Train custom chatbot models from scratch using NumPy and export as .bin files!
 
 ## Features
 
-✅ **Train from scratch** - Build your own AI chatbot with custom neural networks  
+✅ **Two Architectures** - Choose RNN (fast) or **Transformer (like ChatGPT!)**  
 ✅ **GPU Acceleration** - Automatically uses GPU (CuPy) if available, falls back to CPU (NumPy)  
+✅ **Attention Mechanism** - Transformers use multi-head attention for smarter responses  
 ✅ **Multiple data formats** - JSON, CSV, TSV, JSONL, text files with various separators  
 ✅ **Export as .bin** - Download trained model and tokenizer as binary files  
-✅ **Chat interface** - Test your chatbot in real-time  
-✅ **Flexible architecture** - Pure NumPy/CuPy implementation (educational & transparent)
+✅ **Chat interface** - Test your chatbot in real-time with temperature control  
+✅ **Massive Models** - Support for 1B+ parameter models on RTX 4090/5090!  
+✅ **Batch Training** - Process up to 512 samples simultaneously for 10-50x speedup
 
 ## Supported Data Formats
 
@@ -75,15 +77,17 @@ How are you?,I'm great!
 ### 2. Setup Model
 - Navigate to **Model Setup**
 - Click **Build Vocabulary** to create word dictionary
+- **Choose Architecture:**
+  - **RNN (Fast, Basic)**: Simple sequence model, faster training
+  - **Transformer (Smart, Like ChatGPT!)**: Attention-based, MUCH smarter responses!
 - Configure model parameters:
-  - Embedding dimension (32 to **16,384** - supports RTX 5090!)
-  - Hidden dimension (64 to **32,768** - massive models!)
-  - Learning rate (default: 0.01)
+  - **For RNN**: Embedding dim, Hidden dim, Learning rate
+  - **For Transformer**: Embedding dim, Attention heads, Layers, Feed-forward dim
 - **GPU Size Guide:**
-  - GTX 1650 (4GB): embed=512, hidden=1024
-  - RTX 3060 (12GB): embed=1024, hidden=2048
-  - RTX 4090 (24GB): embed=4096, hidden=8192
-  - RTX 5090 (32GB+): embed=8192, hidden=16384+
+  - GTX 1650 (4GB): embed=512, hidden=1024 (or 4 layers Transformer)
+  - RTX 3060 (12GB): embed=1024, hidden=2048 (or 6 layers Transformer)
+  - RTX 4090 (24GB): embed=4096, hidden=8192 (or 12 layers Transformer)
+  - RTX 5090 (32GB+): embed=8192, hidden=16384+ (or 24 layers Transformer!)
 - Click **Create Model**
 - App shows **parameter count** and **VRAM estimate**!
 
@@ -178,11 +182,28 @@ If you have a GPU but the app shows "CPU Mode", you might be missing CUDA compon
 
 ## Model Architecture
 
+### RNN Architecture (Fast, Basic)
 - **Type**: Sequence-to-sequence RNN (Encoder-Decoder)
 - **Encoder**: Processes input text into hidden representation
 - **Decoder**: Generates response token by token
-- **Implementation**: Pure NumPy/CuPy (GPU support included)
-- **Export Format**: Pickle binary (.bin files)
+- **Best for**: Quick training, simple conversations, smaller datasets
+
+### Transformer Architecture (Smart, Like ChatGPT!)
+- **Type**: Attention-based Encoder-Decoder (like GPT, BERT)
+- **Multi-Head Attention**: Learns what parts of input are important
+- **Positional Encoding**: Understands word order without recurrence
+- **Layer Normalization**: Stable training for deep networks
+- **Best for**: Complex conversations, better context understanding, smarter responses!
+
+**Why Transformers are Better:**
+- ✅ **Attention mechanism** - Focuses on relevant parts of conversation
+- ✅ **Parallel processing** - Faster training on GPU
+- ✅ **Better memory** - Remembers longer contexts
+- ✅ **Scalable** - Can build HUGE models (1B+ parameters!)
+- ✅ **State-of-the-art** - Same tech as ChatGPT, GPT-4, Claude!
+
+**Implementation**: Pure NumPy/CuPy (GPU support included)  
+**Export Format**: Pickle binary (.bin files)
 
 ## File Outputs
 
@@ -200,11 +221,24 @@ After training, you can download:
 
 ## Tips for Better Results
 
+### For RNN Models:
 1. **More data = better results** - Aim for 100+ training pairs
 2. **Consistent format** - Make sure your data is clean and consistent
-3. **Longer training** - More epochs (100-500) for complex patterns
-4. **Adjust hidden dimension** - Larger for complex tasks (256-512)
-5. **Test regularly** - Use chat interface to monitor progress
+3. **Moderate epochs** - 5-15 epochs for repetitive data, 50-100 for diverse data
+4. **Adjust hidden dimension** - Larger for complex tasks (512-1024)
+5. **Watch for overfitting** - If comma spam appears, reduce epochs!
+
+### For Transformer Models:
+1. **Start small** - 4 layers, 8 heads for testing
+2. **Scale up gradually** - More layers = smarter but needs more VRAM
+3. **Lower learning rate** - Try 0.001 instead of 0.01
+4. **Fewer epochs needed** - Transformers learn faster! Try 5-20 epochs
+5. **Use temperature** - Adjust 0.5-1.0 for best chat responses
+
+### General Tips:
+- **Test regularly** - Use chat interface to monitor progress
+- **GPU recommended** - Transformers are MUCH faster on GPU
+- **Clean data** - Remove duplicates for better learning
 
 ## Technical Details
 

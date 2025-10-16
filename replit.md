@@ -2,13 +2,25 @@
 
 ## Overview
 
-VnexAI is a custom chatbot training platform built from scratch using NumPy, with a Streamlit-based web interface. The application enables users to train conversational AI models and code debugging assistants on custom datasets. Users can upload conversation data or code debugging data, configure the neural network architecture, train the model from scratch, test it in a chat interface, and export the trained model as a .bin file for deployment.
+VnexAI is a custom chatbot training platform built from scratch using NumPy/CuPy, with a Streamlit-based web interface. The application enables users to train conversational AI models using either RNN or Transformer architectures. Users can upload conversation data or code debugging data, choose between RNN (fast, basic) or Transformer (smart, attention-based like ChatGPT), configure the neural network architecture, train the model from scratch with GPU acceleration, test it in a chat interface with temperature control, and export the trained model as a .bin file for deployment.
 
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
+
+### October 2025 - Transformer Architecture Added! 🚀
+
+**Transformer Model Implementation** (October 16, 2025)
+- Added full Transformer architecture with multi-head attention mechanism
+- Encoder-decoder structure with self-attention and cross-attention
+- Positional encoding for word order understanding
+- Layer normalization for stable deep network training
+- Configurable: attention heads (1-32), layers (1-24), feed-forward dim (128-65536)
+- Same GPU/CPU compatibility as RNN (CuPy/NumPy)
+- Users can now choose: RNN (fast, basic) or Transformer (smart, like ChatGPT!)
+- Transformer benefits: better context, attention mechanism, scalable to 1B+ params
 
 ### October 2025 - Major Performance & Quality Updates
 
@@ -69,16 +81,28 @@ Preferred communication style: Simple, everyday language.
 **Core Components**:
 
 1. **VnexAI Chatbot Model** (`chatbot_model.py`)
-   - Pure NumPy implementation of sequence-to-sequence architecture
+   - Pure NumPy implementation of sequence-to-sequence RNN architecture
    - Encoder-decoder RNN for conversation modeling
    - Custom gradient descent optimization with backpropagation through time
-   - **Batch training** with gradient accumulation (1-128 samples per batch)
+   - **Batch training** with gradient accumulation (1-512 samples per batch)
    - **Temperature sampling** for diverse text generation (0.1-2.0 temperature range)
    - Configurable embedding and hidden dimensions
    - Supports text generation with autoregressive decoding
    - Binary (.bin) model export using pickle serialization
 
-2. **Chatbot Tokenizer** (`chatbot_tokenizer.py`)
+2. **Transformer Chatbot Model** (`transformer_model.py`)
+   - Pure NumPy/CuPy implementation of Transformer architecture
+   - Multi-head attention mechanism (1-32 heads) for context understanding
+   - Encoder-decoder structure with self-attention and cross-attention
+   - Positional encoding for word order without recurrence
+   - Layer normalization for stable deep network training
+   - Configurable: layers (1-24), heads, feed-forward dim (128-65536)
+   - **Same batch training** with gradient accumulation (1-512 samples per batch)
+   - **Temperature sampling** for creative generation
+   - Scales to 1B+ parameters for RTX 4090/5090
+   - Binary (.bin) model export using pickle serialization
+
+3. **Chatbot Tokenizer** (`chatbot_tokenizer.py`)
    - Vocabulary building from training text
    - Text tokenization with special tokens (<PAD>, <START>, <END>, <UNK>)
    - Encode/decode functionality for text ↔ token indices conversion
