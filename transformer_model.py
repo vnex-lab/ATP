@@ -277,30 +277,28 @@ class TransformerChatbot:
         # Gradient for decoder output
         d_decoder_output = self.xp.dot(d_logits, self.output_weights.T)
         
-        # Simplified backprop: Just update embeddings properly (they matter most!)
-        # The attention layers will adjust through embedding changes
-        
-        # Update embeddings with proper gradients (THIS IS THE KEY!)
-        # Compute embedding gradients from decoder output
+        # MUCH STRONGER embedding updates!
+        # Compute embedding gradients from decoder output (for target tokens)
         d_target_embedding = self.xp.zeros_like(self.embedding)
         for t in range(target_input.shape[1]):
             token_idx = int(target_input[0, t])
             if token_idx < self.vocab_size:
+                # Full gradient, no weakening!
                 d_target_embedding[token_idx] += d_decoder_output[0, t, :]
         
-        # Gradient flows through encoder to input embeddings
-        d_encoder_output_from_cross_attn = d_decoder_output
+        # Compute input embedding gradients (from encoder)
+        # The encoder output should change when input embeddings change
         d_input_embedding = self.xp.zeros_like(self.embedding)
-        
         for t in range(input_seq.shape[1]):
             token_idx = int(input_seq[0, t])
             if token_idx < self.vocab_size:
-                # Encoder gradient + cross-attention contribution
-                encoder_grad = encoder_output[0, t, :]  # Use encoder activation as approximation
-                d_input_embedding[token_idx] += 0.1 * encoder_grad * d_encoder_output_from_cross_attn.mean()
+                # Use decoder gradient magnitude to update input embeddings
+                # This creates feedback: decoder wants different encoder outputs
+                d_input_embedding[token_idx] += d_decoder_output.mean(axis=1)[0, :]
         
-        # Update embeddings
-        self.embedding -= lr * (d_target_embedding + d_input_embedding) / (target_len + input_seq.shape[1])
+        # Update embeddings with FULL learning rate (no division!)
+        self.embedding -= lr * d_target_embedding
+        self.embedding -= lr * 0.5 * d_input_embedding  # Input gets 50% strength
     
     def generate(self, input_text, tokenizer, max_length=50, temperature=1.0):
         input_tokens = tokenizer.encode(input_text)
