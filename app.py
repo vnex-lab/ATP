@@ -528,8 +528,9 @@ def training_section():
         target_seqs_all = []
         
         for conv in data:
-            input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=False))
-            target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=False))
+            # CRITICAL FIX: Add START and END tokens!
+            input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=True))
+            target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=True))
             
             max_len = model.max_length if hasattr(model, 'max_length') else model.max_seq_len
             if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < max_len:

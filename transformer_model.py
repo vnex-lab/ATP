@@ -24,7 +24,9 @@ class TransformerChatbot:
         
         self.head_dim = embed_dim // num_heads
         
-        self.embedding = self.xp.random.randn(vocab_size, embed_dim) * 0.01
+        # BETTER initialization for training from scratch!
+        # Embeddings: larger scale for stronger signals
+        self.embedding = self.xp.random.randn(vocab_size, embed_dim) * 0.1
         self.pos_encoding = self._create_positional_encoding()
         
         self.encoder_layers = []
@@ -33,7 +35,9 @@ class TransformerChatbot:
             self.encoder_layers.append(self._init_encoder_layer())
             self.decoder_layers.append(self._init_decoder_layer())
         
-        self.output_weights = self.xp.random.randn(embed_dim, vocab_size) * 0.01
+        # Xavier initialization for output layer
+        scale = self.xp.sqrt(2.0 / (embed_dim + vocab_size))
+        self.output_weights = self.xp.random.randn(embed_dim, vocab_size) * scale
         self.output_bias = self.xp.zeros((1, vocab_size))
         
         self.training_history = {'loss': []}
@@ -65,14 +69,18 @@ class TransformerChatbot:
         return pos_encoding
     
     def _init_encoder_layer(self):
+        # Xavier initialization for better gradient flow
+        scale = self.xp.sqrt(2.0 / self.embed_dim)
+        scale_ff = self.xp.sqrt(2.0 / (self.embed_dim + self.ff_dim))
+        
         layer = {
-            'Wq': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wk': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wv': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wo': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'ff_w1': self.xp.random.randn(self.embed_dim, self.ff_dim) * 0.01,
+            'Wq': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wk': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wv': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wo': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'ff_w1': self.xp.random.randn(self.embed_dim, self.ff_dim) * scale_ff,
             'ff_b1': self.xp.zeros((1, self.ff_dim)),
-            'ff_w2': self.xp.random.randn(self.ff_dim, self.embed_dim) * 0.01,
+            'ff_w2': self.xp.random.randn(self.ff_dim, self.embed_dim) * scale_ff,
             'ff_b2': self.xp.zeros((1, self.embed_dim)),
             'ln1_gamma': self.xp.ones((1, self.embed_dim)),
             'ln1_beta': self.xp.zeros((1, self.embed_dim)),
@@ -82,18 +90,22 @@ class TransformerChatbot:
         return layer
     
     def _init_decoder_layer(self):
+        # Xavier initialization for better gradient flow
+        scale = self.xp.sqrt(2.0 / self.embed_dim)
+        scale_ff = self.xp.sqrt(2.0 / (self.embed_dim + self.ff_dim))
+        
         layer = {
-            'Wq_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wk_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wv_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wo_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wq_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wk_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wv_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'Wo_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * 0.01,
-            'ff_w1': self.xp.random.randn(self.embed_dim, self.ff_dim) * 0.01,
+            'Wq_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wk_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wv_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wo_self': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wq_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wk_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wv_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'Wo_cross': self.xp.random.randn(self.embed_dim, self.embed_dim) * scale,
+            'ff_w1': self.xp.random.randn(self.embed_dim, self.ff_dim) * scale_ff,
             'ff_b1': self.xp.zeros((1, self.ff_dim)),
-            'ff_w2': self.xp.random.randn(self.ff_dim, self.embed_dim) * 0.01,
+            'ff_w2': self.xp.random.randn(self.ff_dim, self.embed_dim) * scale_ff,
             'ff_b2': self.xp.zeros((1, self.embed_dim)),
             'ln1_gamma': self.xp.ones((1, self.embed_dim)),
             'ln1_beta': self.xp.zeros((1, self.embed_dim)),
