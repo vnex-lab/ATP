@@ -736,19 +736,26 @@ def export_model_section():
             import os
             with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
                 tmp_path = tmp.name
+            
+            # File is now closed, safe to write to it
+            try:
                 # Use appropriate save method based on model type
                 if hasattr(model, 'save_model'):
                     model.save_model(tmp_path)  # RNN model
                 else:
                     model.save(tmp_path)  # Transformer model
                 
+                # Read the file
                 with open(tmp_path, 'rb') as f:
                     st.session_state.model_bytes = f.read()
                 
-                # Clean up temp file
-                os.unlink(tmp_path)
-            
-            st.success("Model ready for download!")
+                st.success("Model ready for download!")
+            finally:
+                # Clean up temp file (now it's definitely closed)
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass  # Ignore if already deleted
         
         # Show download button if model bytes exist
         if 'model_bytes' in st.session_state and st.session_state.model_bytes:
@@ -770,14 +777,22 @@ def export_model_section():
                 import os
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
                     tmp_path = tmp.name
+                
+                # File is now closed, safe to write to it
+                try:
                     tokenizer.save(tmp_path)
+                    
+                    # Read the file
                     with open(tmp_path, 'rb') as f:
                         st.session_state.tokenizer_bytes = f.read()
                     
-                    # Clean up temp file
-                    os.unlink(tmp_path)
-                
-                st.success("Tokenizer ready for download!")
+                    st.success("Tokenizer ready for download!")
+                finally:
+                    # Clean up temp file (now it's definitely closed)
+                    try:
+                        os.unlink(tmp_path)
+                    except:
+                        pass  # Ignore if already deleted
         
         # Show download button if tokenizer bytes exist
         if 'tokenizer_bytes' in st.session_state and st.session_state.tokenizer_bytes:
