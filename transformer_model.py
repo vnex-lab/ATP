@@ -277,36 +277,31 @@ class TransformerChatbot:
         # Gradient for decoder output
         d_decoder_output = self.xp.dot(d_logits, self.output_weights.T)
         
-        # STRONG embedding updates - this is what really matters!
-        # Embeddings carry the meaning, attention layers just process them
+        # FIXED: Combine all gradients BEFORE updating embeddings!
+        # This prevents conflicting updates to the same token
         
-        # Update target embeddings (decoder input)
-        d_target_embedding = self.xp.zeros_like(self.embedding)
+        d_embedding = self.xp.zeros_like(self.embedding)
+        
+        # Accumulate gradients from target tokens (decoder input)
         for t in range(target_input.shape[1]):
             token_idx = int(target_input[0, t])
             if token_idx < self.vocab_size:
-                # Full gradient strength!
-                d_target_embedding[token_idx] += d_decoder_output[0, t, :]
+                # Target tokens get direct gradient from decoder output
+                d_embedding[token_idx] += d_decoder_output[0, t, :]
         
-        # Update input embeddings (encoder input)
-        # They need to produce encoder outputs that help the decoder
-        d_input_embedding = self.xp.zeros_like(self.embedding)
-        
-        # Get gradient signal from decoder - it tells us what encoder should produce
-        decoder_wants = self.xp.mean(d_decoder_output, axis=1)[0, :]  # Average across time
+        # Accumulate gradients from input tokens (encoder input)
+        # Get gradient signal from decoder - tells us what encoder should produce
+        decoder_wants = self.xp.mean(d_decoder_output, axis=1)[0, :]
         
         for t in range(input_seq.shape[1]):
             token_idx = int(input_seq[0, t])
             if token_idx < self.vocab_size:
-                # Each input token gets the same feedback signal
-                d_input_embedding[token_idx] += decoder_wants
+                # Input tokens get averaged feedback signal
+                # Use 0.5 weight so input doesn't dominate over target
+                d_embedding[token_idx] += 0.5 * decoder_wants
         
-        # Apply updates with STRONG learning rate
-        # Target embeddings: full strength (they directly affect output)
-        self.embedding -= lr * d_target_embedding
-        
-        # Input embeddings: also strong (they affect what decoder sees)
-        self.embedding -= lr * d_input_embedding
+        # Single update with combined gradients - NO CONFLICTS!
+        self.embedding -= lr * d_embedding
     
     def generate(self, input_text, tokenizer, max_length=50, temperature=1.0):
         input_tokens = tokenizer.encode(input_text)
