@@ -277,47 +277,36 @@ class TransformerChatbot:
         # Gradient for decoder output
         d_decoder_output = self.xp.dot(d_logits, self.output_weights.T)
         
-        # Update decoder layers (CRITICAL!)
-        for layer in reversed(self.decoder_layers):
-            # Approximate gradients for feed-forward
-            d_ff = d_decoder_output * 0.1  # Scaled gradient
-            
-            # Update feed-forward weights
-            layer['ff_w2'] -= lr * 0.01 * self.xp.mean(d_ff, axis=(0, 1), keepdims=True).T
-            layer['ff_w1'] -= lr * 0.01 * self.xp.mean(d_ff, axis=(0, 1), keepdims=True)
-            
-            # Update cross-attention output projection (most important!)
-            layer['Wo_cross'] -= lr * 0.01 * self.xp.mean(d_decoder_output, axis=(0, 1), keepdims=True).T
-            
-            # Update self-attention output projection
-            layer['Wo_self'] -= lr * 0.01 * self.xp.mean(d_decoder_output, axis=(0, 1), keepdims=True).T
+        # STRONG embedding updates - this is what really matters!
+        # Embeddings carry the meaning, attention layers just process them
         
-        # Update encoder layers
-        d_encoder = d_decoder_output.mean(axis=1, keepdims=True) * 0.1
-        for layer in reversed(self.encoder_layers):
-            # Update encoder feed-forward
-            layer['ff_w2'] -= lr * 0.01 * self.xp.mean(d_encoder, axis=(0, 1), keepdims=True).T
-            layer['ff_w1'] -= lr * 0.01 * self.xp.mean(d_encoder, axis=(0, 1), keepdims=True)
-            
-            # Update encoder attention
-            layer['Wo'] -= lr * 0.01 * self.xp.mean(d_encoder, axis=(0, 1), keepdims=True).T
-        
-        # Update embeddings (simplified but stronger)
+        # Update target embeddings (decoder input)
         d_target_embedding = self.xp.zeros_like(self.embedding)
         for t in range(target_input.shape[1]):
             token_idx = int(target_input[0, t])
             if token_idx < self.vocab_size:
+                # Full gradient strength!
                 d_target_embedding[token_idx] += d_decoder_output[0, t, :]
         
+        # Update input embeddings (encoder input)
+        # They need to produce encoder outputs that help the decoder
         d_input_embedding = self.xp.zeros_like(self.embedding)
+        
+        # Get gradient signal from decoder - it tells us what encoder should produce
+        decoder_wants = self.xp.mean(d_decoder_output, axis=1)[0, :]  # Average across time
+        
         for t in range(input_seq.shape[1]):
             token_idx = int(input_seq[0, t])
             if token_idx < self.vocab_size:
-                d_input_embedding[token_idx] += d_decoder_output.mean(axis=1)[0, :]
+                # Each input token gets the same feedback signal
+                d_input_embedding[token_idx] += decoder_wants
         
-        # Update embeddings
+        # Apply updates with STRONG learning rate
+        # Target embeddings: full strength (they directly affect output)
         self.embedding -= lr * d_target_embedding
-        self.embedding -= lr * 0.5 * d_input_embedding
+        
+        # Input embeddings: also strong (they affect what decoder sees)
+        self.embedding -= lr * d_input_embedding
     
     def generate(self, input_text, tokenizer, max_length=50, temperature=1.0):
         input_tokens = tokenizer.encode(input_text)
