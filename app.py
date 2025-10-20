@@ -50,6 +50,10 @@ if 'is_trained' not in st.session_state:
     st.session_state.is_trained = False
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'model_bytes' not in st.session_state:
+    st.session_state.model_bytes = None
+if 'tokenizer_bytes' not in st.session_state:
+    st.session_state.tokenizer_bytes = None
 
 def main():
     # Main title
@@ -724,62 +728,97 @@ def export_model_section():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("Export Model (.bin)"):
+        if st.button("Export Model (.bin)", key="export_model_btn"):
             model = st.session_state.chatbot_model
             
             # Save to bytes
             import tempfile
+            import os
             with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                tmp_path = tmp.name
                 # Use appropriate save method based on model type
                 if hasattr(model, 'save_model'):
-                    model.save_model(tmp.name)  # RNN model
+                    model.save_model(tmp_path)  # RNN model
                 else:
-                    model.save(tmp.name)  # Transformer model
+                    model.save(tmp_path)  # Transformer model
                 
-                with open(tmp.name, 'rb') as f:
-                    model_bytes = f.read()
+                with open(tmp_path, 'rb') as f:
+                    st.session_state.model_bytes = f.read()
+                
+                # Clean up temp file
+                os.unlink(tmp_path)
             
-            st.download_button(
-                label="Download Model.bin",
-                data=model_bytes,
-                file_name=f"{model_name}.bin",
-                mime="application/octet-stream"
-            )
             st.success("Model ready for download!")
+        
+        # Show download button if model bytes exist
+        if 'model_bytes' in st.session_state and st.session_state.model_bytes:
+            st.download_button(
+                label="📥 Download Model.bin",
+                data=st.session_state.model_bytes,
+                file_name=f"{model_name}.bin",
+                mime="application/octet-stream",
+                key="download_model_btn"
+            )
     
     with col2:
-        if st.button("Export Tokenizer (.bin)"):
+        if st.button("Export Tokenizer (.bin)", key="export_tokenizer_btn"):
             if st.session_state.tokenizer:
                 tokenizer = st.session_state.tokenizer
                 
                 # Save to bytes
                 import tempfile
+                import os
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
-                    tokenizer.save(tmp.name)
-                    with open(tmp.name, 'rb') as f:
-                        tokenizer_bytes = f.read()
+                    tmp_path = tmp.name
+                    tokenizer.save(tmp_path)
+                    with open(tmp_path, 'rb') as f:
+                        st.session_state.tokenizer_bytes = f.read()
+                    
+                    # Clean up temp file
+                    os.unlink(tmp_path)
                 
-                st.download_button(
-                    label="Download Tokenizer.bin",
-                    data=tokenizer_bytes,
-                    file_name=f"{model_name}_tokenizer.bin",
-                    mime="application/octet-stream"
-                )
                 st.success("Tokenizer ready for download!")
+        
+        # Show download button if tokenizer bytes exist
+        if 'tokenizer_bytes' in st.session_state and st.session_state.tokenizer_bytes:
+            st.download_button(
+                label="📥 Download Tokenizer.bin",
+                data=st.session_state.tokenizer_bytes,
+                file_name=f"{model_name}_tokenizer.bin",
+                mime="application/octet-stream",
+                key="download_tokenizer_btn"
+            )
     
     # Show model info
     if st.session_state.chatbot_model:
         st.subheader("Model Information")
         model = st.session_state.chatbot_model
         
-        info = {
-            "Vocabulary Size": model.vocab_size,
-            "Embedding Dimension": model.embedding_dim,
-            "Hidden Dimension": model.hidden_dim,
-            "Max Sequence Length": model.max_length,
-            "Learning Rate": model.learning_rate,
-            "Trained": "Yes" if st.session_state.is_trained else "No"
-        }
+        # Check if RNN or Transformer
+        if hasattr(model, 'hidden_dim'):
+            # RNN Model
+            info = {
+                "Model Type": "RNN (Recurrent Neural Network)",
+                "Vocabulary Size": model.vocab_size,
+                "Embedding Dimension": model.embedding_dim,
+                "Hidden Dimension": model.hidden_dim,
+                "Max Sequence Length": model.max_length,
+                "Learning Rate": model.learning_rate,
+                "Trained": "Yes" if st.session_state.is_trained else "No"
+            }
+        else:
+            # Transformer Model
+            info = {
+                "Model Type": "Transformer (Multi-Head Attention)",
+                "Vocabulary Size": model.vocab_size,
+                "Embedding Dimension": model.embed_dim,
+                "Number of Attention Heads": model.num_heads,
+                "Number of Layers": model.num_layers,
+                "Feed-Forward Dimension": model.ff_dim,
+                "Max Sequence Length": model.max_seq_len,
+                "Learning Rate": model.learning_rate,
+                "Trained": "Yes" if st.session_state.is_trained else "No"
+            }
         
         st.json(info)
         
