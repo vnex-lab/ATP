@@ -493,9 +493,12 @@ def training_section():
         st.warning("Please create a model first!")
         return
     
-    if st.session_state.tokenizer is None or st.session_state.training_data is None:
-        st.warning("Please set up tokenizer and training data first!")
-        return
+    # Data stats
+    total_pairs = len(st.session_state.training_data)
+    if total_pairs < 500:
+        st.warning(f"⚠️ Small Dataset Detected ({total_pairs} pairs). For a Transformer to make sense, you really need at least 1,000-5,000 conversation pairs. Training from scratch on tiny data is extremely difficult!")
+    else:
+        st.success(f"📊 Dataset size: {total_pairs} conversation pairs.")
     
     col1, col2, col3 = st.columns(3)
     with col1:

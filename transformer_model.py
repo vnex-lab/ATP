@@ -260,6 +260,9 @@ class TransformerChatbot:
             
             self._backward_and_update(input_seq, target_input, target_output, probs, learning_rate)
         
+        # Learning Rate Decay (Scheduler)
+        self.learning_rate *= 0.99  # Decay slightly after each batch
+        
         return total_loss / batch_size
     
     def _backward_and_update(self, input_seq, target_input, target_output, probs, lr):
