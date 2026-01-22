@@ -270,8 +270,8 @@ def data_upload_section():
                     df = pd.read_parquet(uploaded_file)
                     
                     # Map columns - look for common conversation headers
-                    user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt']
-                    bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response']
+                    user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
+                    bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
                     
                     user_col = next((c for c in df.columns if c.lower() in user_cols), None)
                     bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
@@ -285,8 +285,19 @@ def data_upload_section():
                             })
                         st.session_state.training_data = data
                     else:
-                        st.error(f"Could not find conversation columns in Parquet. Found: {list(df.columns)}")
-                        return
+                        # Fallback: if there are only 2 columns, assume they are user/bot
+                        if len(df.columns) == 2:
+                            data = []
+                            for _, row in df.iterrows():
+                                data.append({
+                                    'user': str(row.iloc[0]),
+                                    'bot': str(row.iloc[1])
+                                })
+                            st.session_state.training_data = data
+                            st.info(f"Auto-mapped columns: '{df.columns[0]}' as User and '{df.columns[1]}' as Bot")
+                        else:
+                            st.error(f"Could not find conversation columns in Parquet. Found: {list(df.columns)}. Please rename your columns to 'user' and 'bot'.")
+                            return
                 
                 st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
                 
