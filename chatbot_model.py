@@ -19,10 +19,10 @@ try:
         np = cp
         GPU_AVAILABLE = True
         DEVICE = "GPU"
-        print("✅ GPU detected and verified - using CuPy for acceleration!")
+        print("GPU detected and verified - using CuPy for acceleration!")
     except Exception as e:
         # CuPy installed but GPU not usable (driver issues, DLL errors, etc.)
-        print(f"⚠️ GPU detected but not usable ({str(e)[:50]}...) - falling back to CPU")
+        print(f"GPU detected but not usable ({str(e)[:50]}...) - falling back to CPU")
         import numpy as np
         GPU_AVAILABLE = False
         DEVICE = "CPU"

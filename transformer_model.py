@@ -42,8 +42,8 @@ class TransformerChatbot:
         
         self.training_history = {'loss': []}
         
-        print(f"🤖 Transformer Model Initialized!")
-        print(f"   GPU: {'✅ Enabled (CuPy)' if GPU_AVAILABLE else '❌ Disabled (NumPy)'}")
+        print(f"Transformer Model Initialized!")
+        print(f"   GPU: {'Enabled (CuPy)' if GPU_AVAILABLE else 'Disabled (NumPy)'}")
         print(f"   Vocab size: {vocab_size:,}")
         print(f"   Embed dim: {embed_dim}")
         print(f"   Attention heads: {num_heads}")
@@ -53,9 +53,9 @@ class TransformerChatbot:
         total_params = self._count_parameters()
         print(f"   📊 Total parameters: {total_params:,}")
         if total_params >= 1_000_000_000:
-            print(f"   🎉 BILLION PARAMETER MODEL! {total_params/1e9:.2f}B params!")
+            print(f"   BILLION PARAMETER MODEL! {total_params/1e9:.2f}B params!")
         elif total_params >= 1_000_000:
-            print(f"   🚀 {total_params/1e6:.1f}M parameter model")
+            print(f"   {total_params/1e6:.1f}M parameter model")
     
     def _create_positional_encoding(self):
         position = self.xp.arange(self.max_seq_len)[:, self.xp.newaxis]
@@ -380,7 +380,7 @@ class TransformerChatbot:
         with open(filepath, 'wb') as f:
             pickle.dump(model_data, f)
         
-        print(f"✅ Transformer model saved to {filepath}")
+        print(f"Transformer model saved to {filepath}")
     
     @staticmethod
     def load(filepath):
@@ -411,5 +411,5 @@ class TransformerChatbot:
             for key, param in layer_data.items():
                 model.decoder_layers[i][key] = xp.array(param)
         
-        print(f"✅ Transformer model loaded from {filepath}")
+        print(f"Transformer model loaded from {filepath}")
         return model
