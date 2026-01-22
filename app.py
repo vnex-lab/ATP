@@ -495,6 +495,41 @@ def training_section():
     
     # Data stats
     total_pairs = len(st.session_state.training_data)
+    
+    # Parquet support
+    uploaded_file = st.sidebar.file_uploader("Upload Parquet Data", type=["parquet"])
+    if uploaded_file:
+        import pandas as pd
+        try:
+            df = pd.read_parquet(uploaded_file)
+            st.sidebar.success(f"Loaded {len(df)} rows from Parquet!")
+            
+            # Map columns - look for common conversation headers
+            user_cols = ['user', 'question', 'input', 'human', 'original_src']
+            bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src']
+            
+            user_col = next((c for c in df.columns if c.lower() in user_cols), None)
+            bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
+            
+            if user_col and bot_col:
+                new_data = []
+                for _, row in df.iterrows():
+                    new_data.append({
+                        'user': str(row[user_col]),
+                        'bot': str(row[bot_col])
+                    })
+                
+                if st.sidebar.button("Add Parquet Data to Training"):
+                    if st.session_state.training_data is None:
+                        st.session_state.training_data = []
+                    st.session_state.training_data.extend(new_data)
+                    st.sidebar.success(f"Added {len(new_data)} pairs!")
+                    st.rerun()
+            else:
+                st.sidebar.error(f"Could not find conversation columns. Found: {list(df.columns)}")
+                
+        except Exception as e:
+            st.sidebar.error(f"Error reading parquet: {e}")
     if total_pairs < 500:
         st.warning(f"⚠️ Small Dataset Detected ({total_pairs} pairs). For a Transformer to make sense, you really need at least 1,000-5,000 conversation pairs. Training from scratch on tiny data is extremely difficult!")
     else:
