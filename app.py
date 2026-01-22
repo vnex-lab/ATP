@@ -92,7 +92,7 @@ def data_upload_section():
     upload_type = st.radio("Choose upload method:", ["Upload File", "Enter Text Manually"])
     
     if upload_type == "Upload File":
-        uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl'])
+        uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl', 'parquet'])
         
         if uploaded_file is not None:
             try:
@@ -264,6 +264,29 @@ def data_upload_section():
                             data.append({'user': user_text, 'bot': bot_text})
                     
                     st.session_state.training_data = data
+
+                elif uploaded_file.name.endswith('.parquet'):
+                    import pandas as pd
+                    df = pd.read_parquet(uploaded_file)
+                    
+                    # Map columns - look for common conversation headers
+                    user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt']
+                    bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response']
+                    
+                    user_col = next((c for c in df.columns if c.lower() in user_cols), None)
+                    bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
+                    
+                    if user_col and bot_col:
+                        data = []
+                        for _, row in df.iterrows():
+                            data.append({
+                                'user': str(row[user_col]),
+                                'bot': str(row[bot_col])
+                            })
+                        st.session_state.training_data = data
+                    else:
+                        st.error(f"Could not find conversation columns in Parquet. Found: {list(df.columns)}")
+                        return
                 
                 st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
                 
