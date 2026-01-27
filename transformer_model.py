@@ -168,8 +168,12 @@ class TransformerChatbot:
         return output
     
     def _softmax(self, x, axis=-1):
-        exp_x = self.xp.exp(x - self.xp.max(x, axis=axis, keepdims=True))
-        return exp_x / self.xp.sum(exp_x, axis=axis, keepdims=True)
+        # Subtract max for stability
+        x_max = self.xp.max(x, axis=axis, keepdims=True)
+        exp_x = self.xp.exp(x - x_max)
+        # Add epsilon to denominator
+        sum_exp = self.xp.sum(exp_x, axis=axis, keepdims=True) + 1e-10
+        return exp_x / sum_exp
     
     def _create_causal_mask(self, seq_len):
         mask = self.xp.triu(self.xp.ones((seq_len, seq_len)), k=1)

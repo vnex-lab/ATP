@@ -17,18 +17,13 @@ class ChatbotTokenizer:
     
     def tokenize(self, text: str) -> List[str]:
         """
-        Tokenize text into words
-        
-        Args:
-            text: Input text string
-        
-        Returns:
-            List of tokens
+        Tokenize text into words with improved regex for code and symbols
         """
-        # Convert to lowercase and split by spaces/punctuation
+        # Convert to lowercase
         text = text.lower()
-        # Keep basic punctuation
-        text = re.sub(r'([.,!?])', r' \1 ', text)
+        # Keep basic punctuation and common code symbols as separate tokens
+        text = re.sub(r'([.,!?(){}\[\]:;=+\-*/<>_])', r' \1 ', text)
+        # Collapse multiple spaces
         text = re.sub(r'\s+', ' ', text)
         tokens = text.strip().split()
         return tokens

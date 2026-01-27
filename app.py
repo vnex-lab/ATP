@@ -31,10 +31,15 @@ st.markdown("""
     .user-message {
         background-color: #e3f2fd;
         text-align: right;
+        color: black !important;
     }
     .bot-message {
         background-color: #f5f5f5;
         text-align: left;
+        color: black !important;
+    }
+    .chat-message div, .chat-message p, .chat-message span {
+        color: black !important;
     }
     </style>
 """, unsafe_allow_html=True)

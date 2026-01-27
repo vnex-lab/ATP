@@ -131,9 +131,13 @@ class VnexAIChatbot:
         return np.tanh(x)
     
     def _softmax(self, x):
-        """Softmax activation"""
-        exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
-        return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
+        """Softmax activation with numerical stability"""
+        # Subtract max for stability
+        x_max = np.max(x, axis=-1, keepdims=True)
+        exp_x = np.exp(x - x_max)
+        # Add epsilon to denominator to prevent division by zero
+        sum_exp = np.sum(exp_x, axis=-1, keepdims=True) + 1e-10
+        return exp_x / sum_exp
     
     def encode(self, input_seq: np.ndarray) -> np.ndarray:
         """
