@@ -419,7 +419,7 @@ def model_setup_section():
                 hidden_dim = st.number_input("Hidden dimension:", 64, 32768, 256, 64,
                                             help="RNN hidden state size. Bigger = more memory but smarter!")
                 max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
-                learning_rate = st.number_input("Learning rate:", 0.001, 0.1, 0.01, 0.001, format="%.3f")
+                learning_rate = st.number_input("Learning rate:", 0.001, 1.0, 0.05, 0.001, format="%.3f")
                 
                 # Calculate approximate parameters for RNN
                 approx_params = (
@@ -439,7 +439,7 @@ def model_setup_section():
                 ff_dim = st.number_input("Feed-forward dimension:", 128, 65536, 1024, 128,
                                         help="Internal processing size. Usually 4x embedding_dim")
                 max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
-                learning_rate = st.number_input("Learning rate:", 0.0001, 0.01, 0.001, 0.0001, format="%.4f")
+                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.005, 0.0001, format="%.4f")
                 
                 # Calculate approximate parameters for Transformer
                 # Each attention layer has Wq, Wk, Wv, Wo (4 * embed_dim^2)
@@ -574,11 +574,18 @@ def training_section():
     else:
         st.success(f"📊 Dataset size: {total_pairs} conversation pairs.")
     
+    st.write("### 💡 Training Pro-Tips:")
+    st.info("""
+    - **Loss too high?** (e.g., above 2.0): Increase epochs or decrease learning rate.
+    - **AI is "dumb"?** Usually means it hasn't trained long enough. Try 50+ epochs.
+    - **Repetitive answers?** Increase temperature in Chat Interface (try 1.0 - 1.2).
+    """)
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        epochs = st.number_input("Number of epochs:", 1, 10000, 100, 10)
+        epochs = st.number_input("Number of epochs:", 1, 10000, 50, 5)
     with col2:
-        batch_size = st.number_input("Batch size:", 1, 512, 32, 1, 
+        batch_size = st.number_input("Batch size:", 1, 512, 16, 1, 
                                       help="GTX 1650: 32-64 | RTX 3060: 64-128 | RTX 4090: 128-256 | RTX 5090: 256-512")
     with col3:
         shuffle_data = st.checkbox("Shuffle data", value=True)
