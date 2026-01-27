@@ -75,27 +75,32 @@ class VnexAIChatbot:
             return f"💻 CPU Mode ({np.__name__})"
     
     def _initialize_weights(self):
-        """Initialize all model weights"""
+        """Initialize all model weights using Xavier/He initialization for better gradient flow"""
         global np, GPU_AVAILABLE, DEVICE
         
         try:
             np.random.seed(42)
             
+            # Xavier/He initialization scales
+            emb_scale = 0.1
+            rnn_scale = np.sqrt(2.0 / (self.embedding_dim + self.hidden_dim))
+            out_scale = np.sqrt(2.0 / (self.hidden_dim + self.vocab_size))
+            
             # Embedding layer
-            self.embedding = np.random.randn(self.vocab_size, self.embedding_dim) * 0.01
+            self.embedding = np.random.randn(self.vocab_size, self.embedding_dim) * emb_scale
             
             # Encoder RNN weights
-            self.Wxh_enc = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
-            self.Whh_enc = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+            self.Wxh_enc = np.random.randn(self.embedding_dim, self.hidden_dim) * rnn_scale
+            self.Whh_enc = np.random.randn(self.hidden_dim, self.hidden_dim) * rnn_scale
             self.bh_enc = np.zeros((1, self.hidden_dim))
             
             # Decoder RNN weights
-            self.Wxh_dec = np.random.randn(self.embedding_dim, self.hidden_dim) * 0.01
-            self.Whh_dec = np.random.randn(self.hidden_dim, self.hidden_dim) * 0.01
+            self.Wxh_dec = np.random.randn(self.embedding_dim, self.hidden_dim) * rnn_scale
+            self.Whh_dec = np.random.randn(self.hidden_dim, self.hidden_dim) * rnn_scale
             self.bh_dec = np.zeros((1, self.hidden_dim))
             
             # Output layer
-            self.Why = np.random.randn(self.hidden_dim, self.vocab_size) * 0.01
+            self.Why = np.random.randn(self.hidden_dim, self.vocab_size) * out_scale
             self.by = np.zeros((1, self.vocab_size))
             
         except Exception as e:
