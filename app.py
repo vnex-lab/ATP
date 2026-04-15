@@ -121,6 +121,8 @@ if 'model_bytes' not in st.session_state:
     st.session_state.model_bytes = None
 if 'tokenizer_bytes' not in st.session_state:
     st.session_state.tokenizer_bytes = None
+if 'gguf_bytes' not in st.session_state:
+    st.session_state.gguf_bytes = None
 
 def main():
     # Main title
@@ -926,91 +928,121 @@ def chat_interface_section():
 
 def export_model_section():
     st.header("💾 Export Your Chatbot")
-    
+
     if st.session_state.chatbot_model is None:
         st.warning("No model to export!")
         return
-    
-    st.write("""
-    Export your trained VnexAI chatbot model as a .bin file. This file contains:
-    - All trained weights and biases
-    - Model architecture parameters
-    - Training history
-    """)
-    
-    model_name = st.text_input("Model name:", value="vnexai_chatbot")
-    
-    col1, col2 = st.columns(2)
-    
+
+    model = st.session_state.chatbot_model
+    is_rnn = hasattr(model, 'hidden_dim')
+
+    # ── Model name (used for ALL export filenames) ───────────────────────────
+    model_name = st.text_input(
+        "Model name:",
+        value="vnexai_chatbot",
+        help="This name is used for all downloaded files. Change it to whatever you like!"
+    )
+    st.caption(f"Files will be saved as: `{model_name}.bin`, `{model_name}.gguf`, `{model_name}_tokenizer.bin`")
+
+    st.divider()
+
+    # ── Three export columns ─────────────────────────────────────────────────
+    col1, col2, col3 = st.columns(3)
+
+    # ── 1. .bin export (original pickle format) ──────────────────────────────
     with col1:
-        if st.button("Export Model (.bin)", key="export_model_btn"):
-            model = st.session_state.chatbot_model
-            
-            # Save to bytes
-            import tempfile
-            import os
+        st.subheader("📦 .bin Format")
+        st.caption("VnexAI native format — load it back with the VnexAI Python API.")
+        if st.button("Prepare Model (.bin)", key="export_model_btn"):
+            import tempfile, os
             with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
                 tmp_path = tmp.name
-            
-            # File is now closed, safe to write to it
             try:
-                # Use appropriate save method based on model type
                 if hasattr(model, 'save_model'):
-                    model.save_model(tmp_path)  # RNN model
+                    model.save_model(tmp_path)
                 else:
-                    model.save(tmp_path)  # Transformer model
-                
-                # Read the file
+                    model.save(tmp_path)
                 with open(tmp_path, 'rb') as f:
                     st.session_state.model_bytes = f.read()
-                
-                st.success("Model ready for download!")
+                st.success("Ready!")
+            except Exception as e:
+                st.error(f"Export failed: {e}")
             finally:
-                # Clean up temp file (now it's definitely closed)
                 try:
                     os.unlink(tmp_path)
                 except:
-                    pass  # Ignore if already deleted
-        
-        # Show download button if model bytes exist
-        if 'model_bytes' in st.session_state and st.session_state.model_bytes:
+                    pass
+
+        if st.session_state.get('model_bytes'):
             st.download_button(
-                label="📥 Download Model.bin",
+                label="📥 Download .bin",
                 data=st.session_state.model_bytes,
                 file_name=f"{model_name}.bin",
                 mime="application/octet-stream",
                 key="download_model_btn"
             )
-    
+
+    # ── 2. .gguf export ───────────────────────────────────────────────────────
     with col2:
-        if st.button("Export Tokenizer (.bin)", key="export_tokenizer_btn"):
+        st.subheader("🦙 .gguf Format")
+        st.caption("Standard GGUF binary — compatible with llama.cpp tooling.")
+
+        st.warning(
+            "⚠️ **Ollama limitation:** Ollama can only run models with architectures it "
+            "knows (LLaMA, Mistral, Gemma, etc.). A VnexAI RNN/Transformer isn't one of "
+            "them, so Ollama will refuse to load it. The GGUF file is still useful for "
+            "archiving or your own C++ inference code.",
+            icon="⚠️"
+        )
+
+        if st.button("Prepare Model (.gguf)", key="export_gguf_btn"):
+            try:
+                from gguf_writer import export_rnn_to_gguf, export_transformer_to_gguf
+                with st.spinner("Building GGUF file…"):
+                    if is_rnn:
+                        gguf_bytes = export_rnn_to_gguf(model, model_name)
+                    else:
+                        gguf_bytes = export_transformer_to_gguf(model, model_name)
+                st.session_state.gguf_bytes = gguf_bytes
+                size_mb = len(gguf_bytes) / (1024 * 1024)
+                st.success(f"Ready! ({size_mb:.1f} MB)")
+            except Exception as e:
+                st.error(f"GGUF export failed: {e}")
+
+        if st.session_state.get('gguf_bytes'):
+            st.download_button(
+                label="📥 Download .gguf",
+                data=st.session_state.gguf_bytes,
+                file_name=f"{model_name}.gguf",
+                mime="application/octet-stream",
+                key="download_gguf_btn"
+            )
+
+    # ── 3. Tokenizer .bin export ──────────────────────────────────────────────
+    with col3:
+        st.subheader("📝 Tokenizer (.bin)")
+        st.caption("Save the vocabulary so you can decode outputs later.")
+        if st.button("Prepare Tokenizer (.bin)", key="export_tokenizer_btn"):
             if st.session_state.tokenizer:
-                tokenizer = st.session_state.tokenizer
-                
-                # Save to bytes
-                import tempfile
-                import os
+                import tempfile, os
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
                     tmp_path = tmp.name
-                
-                # File is now closed, safe to write to it
                 try:
-                    tokenizer.save(tmp_path)
-                    
-                    # Read the file
+                    st.session_state.tokenizer.save(tmp_path)
                     with open(tmp_path, 'rb') as f:
                         st.session_state.tokenizer_bytes = f.read()
-                    
-                    st.success("Tokenizer ready for download!")
+                    st.success("Ready!")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
                 finally:
-                    # Clean up temp file (now it's definitely closed)
                     try:
                         os.unlink(tmp_path)
                     except:
-                        pass  # Ignore if already deleted
-        
-        # Show download button if tokenizer bytes exist
-        if 'tokenizer_bytes' in st.session_state and st.session_state.tokenizer_bytes:
+                        pass
+            else:
+                st.error("No tokenizer found — build the vocabulary first.")
+
+        if st.session_state.get('tokenizer_bytes'):
             st.download_button(
                 label="📥 Download Tokenizer.bin",
                 data=st.session_state.tokenizer_bytes,
@@ -1018,42 +1050,39 @@ def export_model_section():
                 mime="application/octet-stream",
                 key="download_tokenizer_btn"
             )
-    
-    # Show model info
-    if st.session_state.chatbot_model:
-        st.subheader("Model Information")
-        model = st.session_state.chatbot_model
-        
-        # Check if RNN or Transformer
-        if hasattr(model, 'hidden_dim'):
-            # RNN Model
-            info = {
-                "Model Type": "RNN (Recurrent Neural Network)",
-                "Vocabulary Size": model.vocab_size,
-                "Embedding Dimension": model.embedding_dim,
-                "Hidden Dimension": model.hidden_dim,
-                "Max Sequence Length": model.max_length,
-                "Learning Rate": model.learning_rate,
-                "Trained": "Yes" if st.session_state.is_trained else "No"
-            }
-        else:
-            # Transformer Model
-            info = {
-                "Model Type": "Transformer (Multi-Head Attention)",
-                "Vocabulary Size": model.vocab_size,
-                "Embedding Dimension": model.embed_dim,
-                "Number of Attention Heads": model.num_heads,
-                "Number of Layers": model.num_layers,
-                "Feed-Forward Dimension": model.ff_dim,
-                "Max Sequence Length": model.max_seq_len,
-                "Learning Rate": model.learning_rate,
-                "Trained": "Yes" if st.session_state.is_trained else "No"
-            }
-        
-        st.json(info)
-        
-        if st.session_state.is_trained and model.training_history['loss']:
-            st.write(f"**Final Training Loss:** {model.training_history['loss'][-1]:.4f}")
+
+    st.divider()
+
+    # ── Model info panel ──────────────────────────────────────────────────────
+    st.subheader("Model Information")
+    if is_rnn:
+        info = {
+            "Model Type": "RNN (Recurrent Neural Network)",
+            "Model Name": model_name,
+            "Vocabulary Size": model.vocab_size,
+            "Embedding Dimension": model.embedding_dim,
+            "Hidden Dimension": model.hidden_dim,
+            "Max Sequence Length": model.max_length,
+            "Learning Rate": model.learning_rate,
+            "Trained": "Yes" if st.session_state.is_trained else "No",
+        }
+    else:
+        info = {
+            "Model Type": "Transformer (Multi-Head Attention)",
+            "Model Name": model_name,
+            "Vocabulary Size": model.vocab_size,
+            "Embedding Dimension": model.embed_dim,
+            "Number of Attention Heads": model.num_heads,
+            "Number of Layers": model.num_layers,
+            "Feed-Forward Dimension": model.ff_dim,
+            "Max Sequence Length": model.max_seq_len,
+            "Learning Rate": model.learning_rate,
+            "Trained": "Yes" if st.session_state.is_trained else "No",
+        }
+    st.json(info)
+
+    if st.session_state.is_trained and model.training_history['loss']:
+        st.write(f"**Final Training Loss:** {model.training_history['loss'][-1]:.4f}")
 
 if __name__ == "__main__":
     main()
