@@ -10,6 +10,21 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### April 2026 - Bug Fixes & The Stack Parquet Support
+
+**Critical RNN Generation Bug Fixed** (April 15, 2026)
+- Fixed: RNN was starting generation from `<PAD>` token (index 0) instead of `<START>` (index 1) — every response was broken from step 1
+- Fixed: Chat interface was encoding user input without special tokens, but training used them — now consistent
+- Fixed: Tokenizer decode only cleaned up `.,!?` spacing; now also cleans `()[]{}` and contractions like `i ' m` → `i'm`
+
+**The Stack / Code Parquet Support** (April 15, 2026)
+- Added `parse_code_parquet()` helper that auto-detects code-file Parquet datasets (any file with a `content` column)
+- Strategy 1: Extracts Python function + docstring pairs as user/bot training data (`"Write a Python function that: <docstring>"` → `<code>`)
+- Strategy 2 (fallback): Splits code files in thirds as code-completion pairs when no docstrings found
+- Filters to Python-only rows when a `lang` column exists
+- Both the Data Upload section and the Training sidebar now handle The Stack format
+- Existing conversation Parquet files are unaffected — detection is based on column presence
+
 ### October 2025 - Transformer Architecture Added! 🚀
 
 **Transformer Model Implementation** (October 16, 2025)

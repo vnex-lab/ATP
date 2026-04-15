@@ -2,9 +2,71 @@ import streamlit as st
 import numpy as np
 import json
 import io
+import re
 from chatbot_model import VnexAIChatbot
 from transformer_model import TransformerChatbot
 from chatbot_tokenizer import ChatbotTokenizer
+
+
+def parse_code_parquet(df, max_pairs=2000):
+    """
+    Extract user/bot training pairs from code-file Parquet datasets like
+    The Stack (bigcode/the-stack) or any dataset with a 'content' column.
+    Strategy 1: Extract function-signature + docstring → function body pairs.
+    Strategy 2 (fallback): Split each file in thirds as code-completion pairs.
+    """
+    col_map = {c.lower(): c for c in df.columns}
+    content_col = col_map.get('content')
+    lang_col = col_map.get('lang')
+
+    if not content_col:
+        return []
+
+    # Prefer Python files if a language column exists
+    if lang_col:
+        df = df[df[lang_col].str.lower().isin(['python', 'py'])].copy()
+
+    data = []
+
+    # Regex: match Python functions that have a docstring immediately after the signature
+    pattern = re.compile(
+        r'((?:async\s+)?def\s+\w+\s*\([^)]*\)(?:\s*->[^\n:]+)?:)'
+        r'[ \t]*\n[ \t]+'
+        r'(?:\"\"\"(.*?)\"\"\"|\'\'\'(.*?)\'\'\')'
+        r'(.*?)(?=\n[ \t]*(?:async\s+)?def |\Z)',
+        re.DOTALL
+    )
+
+    for _, row in df.iterrows():
+        if len(data) >= max_pairs:
+            break
+        code = str(row[content_col])
+        for m in pattern.finditer(code):
+            sig = m.group(1).strip()
+            doc = (m.group(2) or m.group(3) or '').strip()
+            body = m.group(4).strip()
+            if doc and len(doc) > 5 and len(body) > 5 and len(body) < 3000:
+                user_msg = f'Write a Python function that: {doc}'
+                bot_msg = f'{sig}\n    """{doc}"""\n    {body}'
+                data.append({'user': user_msg, 'bot': bot_msg})
+                if len(data) >= max_pairs:
+                    break
+
+    # Fallback: code-split style if docstring extraction yielded too few pairs
+    if len(data) < 10:
+        for _, row in df.iterrows():
+            if len(data) >= max_pairs:
+                break
+            code = str(row[content_col])
+            lines = [l for l in code.split('\n') if l.strip()]
+            if len(lines) >= 8:
+                mid = max(2, len(lines) // 3)
+                user_msg = '\n'.join(lines[:mid])
+                bot_msg = '\n'.join(lines[mid:])
+                if len(user_msg) > 20 and len(bot_msg) > 20:
+                    data.append({'user': user_msg, 'bot': bot_msg})
+
+    return data
 
 # Set page configuration
 st.set_page_config(
@@ -310,35 +372,50 @@ def data_upload_section():
                 elif uploaded_file.name.endswith('.parquet'):
                     import pandas as pd
                     df = pd.read_parquet(uploaded_file)
+                    col_lower_set = {c.lower() for c in df.columns}
                     
-                    # Map columns - look for common conversation headers
-                    user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
-                    bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
-                    
-                    user_col = next((c for c in df.columns if c.lower() in user_cols), None)
-                    bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
-                    
-                    if user_col and bot_col:
-                        data = []
-                        for _, row in df.iterrows():
-                            data.append({
-                                'user': str(row[user_col]),
-                                'bot': str(row[bot_col])
-                            })
-                        st.session_state.training_data = data
+                    # --- Detect code-file datasets (The Stack, GitHub Code, etc.) ---
+                    if 'content' in col_lower_set:
+                        with st.spinner("Extracting function/docstring pairs from code files..."):
+                            data = parse_code_parquet(df, max_pairs=2000)
+                        if data:
+                            st.session_state.training_data = data
+                            method = "function docstrings" if len(data) >= 10 else "code-split fallback"
+                            st.info(f"Detected code dataset (The Stack / GitHub format). Extracted **{len(data)}** training pairs using {method}.")
+                        else:
+                            st.error("Found a 'content' column but could not extract any training pairs. The code files may have no docstrings and be too short.")
+                            return
                     else:
-                        # Fallback: if there are only 2 columns, assume they are user/bot
-                        if len(df.columns) == 2:
+                        # --- Standard conversation dataset ---
+                        user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
+                        bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
+                        
+                        user_col = next((c for c in df.columns if c.lower() in user_cols), None)
+                        bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
+                        
+                        if user_col and bot_col:
                             data = []
                             for _, row in df.iterrows():
-                                data.append({
-                                    'user': str(row.iloc[0]),
-                                    'bot': str(row.iloc[1])
-                                })
+                                u = str(row[user_col]).strip()
+                                b = str(row[bot_col]).strip()
+                                if u and b:
+                                    data.append({'user': u, 'bot': b})
                             st.session_state.training_data = data
-                            st.info(f"Auto-mapped columns: '{df.columns[0]}' as User and '{df.columns[1]}' as Bot")
+                        elif len(df.columns) == 2:
+                            data = []
+                            for _, row in df.iterrows():
+                                u = str(row.iloc[0]).strip()
+                                b = str(row.iloc[1]).strip()
+                                if u and b:
+                                    data.append({'user': u, 'bot': b})
+                            st.session_state.training_data = data
+                            st.info(f"Auto-mapped columns: **'{df.columns[0]}'** → User, **'{df.columns[1]}'** → Bot")
                         else:
-                            st.error(f"Could not find conversation columns in Parquet. Found: {list(df.columns)}. Please rename your columns to 'user' and 'bot'.")
+                            st.error(
+                                f"Could not auto-detect columns in this Parquet file.\n\n"
+                                f"**Found columns:** {list(df.columns)}\n\n"
+                                f"**Fix:** Rename your columns to `user` and `bot`, or make sure a `content` column exists for code datasets."
+                            )
                             return
                 
                 st.success(f"Loaded {len(st.session_state.training_data)} conversation pairs!")
@@ -578,32 +655,48 @@ def training_section():
         import pandas as pd
         try:
             df = pd.read_parquet(uploaded_file)
-            st.sidebar.success(f"Loaded {len(df)} rows from Parquet!")
-            
-            # Map columns - look for common conversation headers
-            user_cols = ['user', 'question', 'input', 'human', 'original_src']
-            bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src']
-            
-            user_col = next((c for c in df.columns if c.lower() in user_cols), None)
-            bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
-            
-            if user_col and bot_col:
-                new_data = []
-                for _, row in df.iterrows():
-                    new_data.append({
-                        'user': str(row[user_col]),
-                        'bot': str(row[bot_col])
-                    })
-                
+            col_lower_set = {c.lower() for c in df.columns}
+            new_data = []
+
+            if 'content' in col_lower_set:
+                # The Stack / code-file format
+                new_data = parse_code_parquet(df, max_pairs=2000)
+                if new_data:
+                    st.sidebar.success(f"Code dataset detected! Extracted {len(new_data)} pairs.")
+                else:
+                    st.sidebar.error("Found 'content' column but could not extract training pairs.")
+            else:
+                # Standard conversation columns
+                user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
+                bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
+                user_col = next((c for c in df.columns if c.lower() in user_cols), None)
+                bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
+
+                if user_col and bot_col:
+                    for _, row in df.iterrows():
+                        u = str(row[user_col]).strip()
+                        b = str(row[bot_col]).strip()
+                        if u and b:
+                            new_data.append({'user': u, 'bot': b})
+                    st.sidebar.success(f"Loaded {len(new_data)} rows from Parquet!")
+                elif len(df.columns) == 2:
+                    for _, row in df.iterrows():
+                        u = str(row.iloc[0]).strip()
+                        b = str(row.iloc[1]).strip()
+                        if u and b:
+                            new_data.append({'user': u, 'bot': b})
+                    st.sidebar.info(f"Auto-mapped 2 columns. {len(new_data)} pairs loaded.")
+                else:
+                    st.sidebar.error(f"Could not detect columns. Found: {list(df.columns)}")
+
+            if new_data:
                 if st.sidebar.button("Add Parquet Data to Training"):
                     if st.session_state.training_data is None:
                         st.session_state.training_data = []
                     st.session_state.training_data.extend(new_data)
                     st.sidebar.success(f"Added {len(new_data)} pairs!")
                     st.rerun()
-            else:
-                st.sidebar.error(f"Could not find conversation columns. Found: {list(df.columns)}")
-                
+
         except Exception as e:
             st.sidebar.error(f"Error reading parquet: {e}")
     if total_pairs < 500:
