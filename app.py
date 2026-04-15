@@ -516,46 +516,52 @@ def model_setup_section():
             st.write("### 🧠 Choose Architecture:")
             model_type = st.radio(
                 "Model Type:",
-                ["RNN (Fast, Basic)", "Transformer (Smart, Like ChatGPT!)"],
-                help="RNN is faster but basic. Transformer is MUCH smarter (uses attention like ChatGPT)!"
+                ["Transformer (Recommended)", "RNN (Legacy, Basic)"],
+                index=0,
+                help="Transformer uses attention (like GPT/BERT) and learns much better. RNN is kept for legacy use only."
             )
-            
-            # MASSIVE limits for big GPUs! 🚀
-            st.write("**🔥 GPU Size Guide:**")
-            st.write("- **GTX 1650 (4GB)**: embed=512, hidden=1024")
-            st.write("- **RTX 3060 (12GB)**: embed=1024, hidden=2048")
-            st.write("- **RTX 4090 (24GB)**: embed=4096, hidden=8192")
-            st.write("- **RTX 5090 (32GB+)**: embed=8192, hidden=16384+")
-            
-            embedding_dim = st.number_input("Embedding dimension:", 32, 16384, 128, 32, 
-                                           help="Token embedding size. Bigger = smarter but needs more VRAM!")
-            
+
+            if "RNN" in model_type:
+                st.warning("RNN is a legacy option. Transformer trains better, generates smarter responses, and scales to any size. Consider switching unless you have a specific reason to use RNN.")
+
+            # GPU size guide — Transformer-first labels
+            st.write("**🔥 GPU Size Guide (Transformer):**")
+            st.write("- **CPU / No GPU**: embed=128, heads=4, layers=2, ff=512")
+            st.write("- **GTX 1650 (4GB)**: embed=256, heads=8, layers=4, ff=1024")
+            st.write("- **RTX 3060 (12GB)**: embed=512, heads=8, layers=6, ff=2048")
+            st.write("- **RTX 4090 (24GB)**: embed=1024, heads=16, layers=12, ff=4096")
+            st.write("- **RTX 5090 (32GB+)**: embed=2048, heads=16, layers=24, ff=8192")
+
+            embedding_dim = st.number_input("Embedding dimension:", 32, 16384, 256, 32,
+                                           help="Token embedding size. Must be divisible by number of heads for Transformer.")
+
             if "RNN" in model_type:
                 # RNN parameters
                 hidden_dim = st.number_input("Hidden dimension:", 64, 32768, 256, 64,
-                                            help="RNN hidden state size. Bigger = more memory but smarter!")
+                                            help="RNN hidden state size.")
                 max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
                 learning_rate = st.number_input("Learning rate:", 0.001, 1.0, 0.05, 0.001, format="%.3f")
-                
+
                 # Calculate approximate parameters for RNN
                 approx_params = (
-                    vocab_size * embedding_dim +  # Embedding
-                    embedding_dim * hidden_dim * 2 +  # Encoder Wxh, Decoder Wxh
-                    hidden_dim * hidden_dim * 2 +  # Encoder Whh, Decoder Whh
-                    hidden_dim * 4 +  # Biases
-                    hidden_dim * vocab_size +  # Output layer
-                    vocab_size  # Output bias
+                    vocab_size * embedding_dim +
+                    embedding_dim * hidden_dim * 2 +
+                    hidden_dim * hidden_dim * 2 +
+                    hidden_dim * 4 +
+                    hidden_dim * vocab_size +
+                    vocab_size
                 )
             else:
                 # Transformer parameters
-                num_heads = st.number_input("Number of attention heads:", 1, 32, 8, 1,
-                                           help="More heads = better attention! Must divide embed_dim evenly")
-                num_layers = st.number_input("Number of layers:", 1, 24, 4, 1,
-                                            help="Deeper = smarter! ChatGPT uses 12+ layers")
+                num_heads = st.number_input("Attention heads:", 1, 32, 8, 1,
+                                           help="More heads = richer attention. Must divide embedding_dim evenly.")
+                num_layers = st.number_input("Layers:", 1, 24, 4, 1,
+                                            help="Deeper = smarter. GPT-2 small uses 12 layers.")
                 ff_dim = st.number_input("Feed-forward dimension:", 128, 65536, 1024, 128,
-                                        help="Internal processing size. Usually 4x embedding_dim")
-                max_length = st.number_input("Max sequence length:", 10, 500, 50, 10)
-                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.005, 0.0001, format="%.4f")
+                                        help="Set this to 4x your embedding_dim for best results.")
+                max_length = st.number_input("Max sequence length:", 10, 500, 64, 10)
+                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.001, 0.0001, format="%.4f",
+                                               help="0.001 is a good starting point. Lower if loss is unstable.")
                 
                 # Calculate approximate parameters for Transformer
                 # Each attention layer has Wq, Wk, Wv, Wo (4 * embed_dim^2)
@@ -626,7 +632,8 @@ def model_setup_section():
                 
                 st.session_state.chatbot_model = model
                 st.session_state.is_trained = False
-                st.success(f"{'Transformer' if 'Transformer' in model_type else 'RNN'} model created!")
+                arch_name = "RNN" if "RNN" in model_type else "Transformer"
+                st.success(f"{arch_name} model created! Head to the Training tab to start training.")
                 
                 # Show device info (RNN has this method, Transformer has gpu_available)
                 if hasattr(model, 'get_device_info'):
@@ -702,15 +709,18 @@ def training_section():
         except Exception as e:
             st.sidebar.error(f"Error reading parquet: {e}")
     if total_pairs < 500:
-        st.warning(f"⚠️ Small Dataset Detected ({total_pairs} pairs). For a Transformer to make sense, you really need at least 1,000-5,000 conversation pairs. Training from scratch on tiny data is extremely difficult!")
+        st.warning(f"⚠️ Small Dataset ({total_pairs} pairs). Transformers need at least 1,000–5,000 pairs to learn well. More data = smarter responses.")
+    elif total_pairs < 1000:
+        st.info(f"📊 {total_pairs} pairs — decent start! 1,000+ pairs will give noticeably better results.")
     else:
-        st.success(f"📊 Dataset size: {total_pairs} conversation pairs.")
-    
-    st.write("### 💡 Training Pro-Tips:")
+        st.success(f"📊 {total_pairs} conversation pairs loaded. Good dataset size!")
+
+    st.write("### 💡 Transformer Training Tips:")
     st.info("""
-    - **Loss too high?** (e.g., above 2.0): Increase epochs or decrease learning rate.
-    - **AI is "dumb"?** Usually means it hasn't trained long enough. Try 50+ epochs.
-    - **Repetitive answers?** Increase temperature in Chat Interface (try 1.0 - 1.2).
+    - **Best settings to start:** embed=256, heads=8, layers=4, ff=1024, LR=0.001
+    - **Loss too high after training?** Try more epochs (100+) or a slightly lower LR (0.0005).
+    - **Repetitive answers?** Raise temperature in the Chat tab (try 1.0–1.3).
+    - **Loss not moving?** LR might be too low — try 0.003 or 0.005.
     """)
     
     col1, col2, col3 = st.columns(3)
