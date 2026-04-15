@@ -804,15 +804,20 @@ def training_section():
             
             avg_loss = np.mean(epoch_losses) if epoch_losses else 0
             losses.append(avg_loss)
-            
+
+            # Decay LR once per epoch (both RNN and Transformer have step_lr)
+            if hasattr(model, 'step_lr'):
+                model.step_lr()
+
             # Print epoch summary
-            print(f"  ✅ Epoch {epoch + 1} complete | Avg Loss: {avg_loss:.4f}")
+            current_lr = getattr(model, 'learning_rate', '?')
+            print(f"  ✅ Epoch {epoch + 1} complete | Avg Loss: {avg_loss:.4f} | LR: {current_lr:.6f}")
             print("-" * 60)
             
             # Update progress
             progress = (epoch + 1) / epochs
             progress_bar.progress(progress)
-            status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f}")
+            status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f} | LR: {current_lr:.6f}")
             
             # Update chart every 10 epochs
             if (epoch + 1) % 10 == 0 or epoch == epochs - 1:

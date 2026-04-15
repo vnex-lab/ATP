@@ -264,12 +264,13 @@ class TransformerChatbot:
             
             self._backward_and_update(input_seq, target_input, target_output, probs, learning_rate)
         
-        # Learning Rate Scheduler - use a warmer approach for scratch training
-        # Decay slightly but don't kill the learning signal too fast
-        if self.learning_rate > 1e-5:
-            self.learning_rate *= 0.995 
-        
         return total_loss / batch_size
+
+    def step_lr(self, decay: float = 0.98):
+        """Call once per epoch to decay learning rate. Removed per-batch decay
+        which was killing LR (0.995^1500 batches ≈ 0) before training finished."""
+        if self.learning_rate > 1e-5:
+            self.learning_rate *= decay
     
     def _backward_and_update(self, input_seq, target_input, target_output, probs, lr):
         batch_size, target_len, _ = probs.shape

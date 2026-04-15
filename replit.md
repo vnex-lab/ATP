@@ -10,7 +10,16 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
-### April 2026 - Bug Fixes & The Stack Parquet Support
+### April 2026 - 5 Root-Cause "AI Stupidity" Bug Fixes
+
+**All 5 Root-Cause Inference/Training Bugs Fixed** (April 15, 2026)
+- Fixed: RNN `compute_loss` was comparing `outputs[t]` vs `targets[t]` (current token) — now correctly predicts `targets[t+1]` (next token). This was the most critical bug.
+- Fixed: RNN `backward()` was using `decoder_hidden_states[t]` for the output gradient — now correctly uses `decoder_hidden_states[t+1]` (the state that produced output[t]) in two places (dWhy and dh_raw tanh derivative).
+- Fixed: RNN `backward()` was using `decoder_hidden_states[t-1]` for `dWhh_dec` — now correctly uses `decoder_hidden_states[t]` (previous state for recurrence gradient).
+- Fixed: Bias gradients (`dbh_enc`, `dbh_dec`, `dby`) were missing from gradient clipping — now included in clip list. Prevents exploding biases.
+- Fixed: Transformer `train_batch()` decayed LR every batch (`0.995^N_batches ≈ 0`) — moved to `step_lr()` called once per epoch from app.py. LR now decays 2% per epoch instead of crashing.
+- Added `step_lr()` method to both RNN and Transformer. Called from `app.py` training loop after each epoch (includes LR printed in status bar and console).
+- Sanity test: 20-epoch tiny training run verified loss drops 2.84 → 0.06 and model correctly generates responses.
 
 **Critical RNN Generation Bug Fixed** (April 15, 2026)
 - Fixed: RNN was starting generation from `<PAD>` token (index 0) instead of `<START>` (index 1) — every response was broken from step 1

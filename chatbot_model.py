@@ -220,7 +220,7 @@ class VnexAIChatbot:
                 
                 generated_tokens.append(next_token)
                 
-                if next_token == 1:  # <END> token
+                if next_token == 2:  # <END> token is index 2 (not 1 which is <START>)
                     break
                 x_t = self.embedding[next_token].reshape(1, -1)
         
@@ -245,22 +245,17 @@ class VnexAIChatbot:
     
     def compute_loss(self, outputs: np.ndarray, targets: np.ndarray) -> float:
         """
-        Compute cross-entropy loss
-        
-        Args:
-            outputs: Predicted probabilities [seq_len, vocab_size]
-            targets: Target token indices [seq_len]
-        
-        Returns:
-            loss: Average cross-entropy loss (Python float)
+        Compute cross-entropy loss.
+        outputs[t] is the prediction made AFTER seeing targets[t] as input,
+        so the correct label is targets[t+1] (next-token prediction).
         """
         loss = 0
-        for t in range(len(targets)):
-            if t < len(outputs):
-                loss += -np.log(outputs[t, 0, targets[t]] + 1e-10)
-        
-        avg_loss = loss / len(targets)
-        # Convert to Python float for compatibility with both NumPy and CuPy
+        count = 0
+        for t in range(len(outputs)):
+            if t + 1 < len(targets):
+                loss += -np.log(outputs[t, 0, targets[t + 1]] + 1e-10)
+                count += 1
+        avg_loss = loss / max(count, 1)
         if GPU_AVAILABLE and hasattr(avg_loss, 'get'):
             return float(avg_loss.get())
         return float(avg_loss)
@@ -288,31 +283,35 @@ class VnexAIChatbot:
         dembedding = np.zeros_like(self.embedding)
         
         # Backward through decoder
+        # decoder_hidden_states[0]   = encoder hidden (initial)
+        # decoder_hidden_states[t+1] = hidden state produced at step t
+        # output[t] was computed from hidden_states[t+1], not [t]
         dh_next = np.zeros((1, self.hidden_dim))
         
-        for t in reversed(range(len(target_seq))):
-            if t < len(outputs):
-                # Output layer gradient
+        for t in reversed(range(len(target_seq) - 1)):
+            if t < len(outputs) and t + 1 < len(target_seq):
+                # FIXED: predict targets[t+1] from step t (next-token prediction)
                 dy = outputs[t].copy()
-                dy[0, target_seq[t]] -= 1  # Softmax + cross-entropy gradient
-                
-                dWhy += np.dot(decoder_hidden_states[t].T, dy)
+                dy[0, target_seq[t + 1]] -= 1
+
+                # FIXED: output[t] = Why @ h_{t+1}, so gradient uses h_{t+1}
+                dWhy += np.dot(decoder_hidden_states[t + 1].T, dy)
                 dby += dy
-                
-                # Hidden state gradient
+
                 dh = np.dot(dy, self.Why.T) + dh_next
-                dh_raw = dh * (1 - decoder_hidden_states[t] ** 2)  # tanh derivative
-                
+                # FIXED: tanh derivative uses h_{t+1} (the state that was output at step t)
+                dh_raw = dh * (1 - decoder_hidden_states[t + 1] ** 2)
+
                 # Decoder RNN gradients
                 x_t = self.embedding[target_seq[t]].reshape(1, -1)
                 dWxh_dec += np.dot(x_t.T, dh_raw)
-                if t > 0:
-                    dWhh_dec += np.dot(decoder_hidden_states[t-1].T, dh_raw)
+                # FIXED: recurrent gradient uses h_t = decoder_hidden_states[t]
+                dWhh_dec += np.dot(decoder_hidden_states[t].T, dh_raw)
                 dbh_dec += dh_raw
-                
-                # Embedding gradient
+
+                # Embedding gradient (input token at step t)
                 dembedding[target_seq[t]] += np.dot(dh_raw, self.Wxh_dec.T).flatten()
-                
+
                 dh_next = np.dot(dh_raw, self.Whh_dec.T)
         
         # Simplified encoder gradient (only propagate from final state)
@@ -337,8 +336,10 @@ class VnexAIChatbot:
                 dembedding[input_seq[t]] += np.dot(dh_raw, self.Wxh_enc.T).flatten()
                 dh_enc = np.dot(dh_raw, self.Whh_enc.T)
         
-        # Clip gradients
-        for grad in [dWxh_enc, dWhh_enc, dWxh_dec, dWhh_dec, dWhy, dembedding]:
+        # Clip ALL gradients including biases to prevent explosions
+        for grad in [dWxh_enc, dWhh_enc, dbh_enc,
+                     dWxh_dec, dWhh_dec, dbh_dec,
+                     dWhy, dby, dembedding]:
             np.clip(grad, -5, 5, out=grad)
         
         return {
@@ -368,6 +369,11 @@ class VnexAIChatbot:
         
         self.embedding -= self.learning_rate * gradients['dembedding']
     
+    def step_lr(self, decay: float = 0.98):
+        """Call once per epoch to decay the learning rate by `decay` factor."""
+        if self.learning_rate > 1e-5:
+            self.learning_rate *= decay
+
     def train_step(self, input_seq: np.ndarray, target_seq: np.ndarray) -> float:
         """Single training step"""
         outputs, encoder_hidden, decoder_hidden_states = self.forward(input_seq, target_seq)
