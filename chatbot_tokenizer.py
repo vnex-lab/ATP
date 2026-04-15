@@ -103,9 +103,14 @@ class ChatbotTokenizer:
                     continue
                 tokens.append(token)
         
-        # Join tokens and clean up punctuation
+        # Join tokens and clean up punctuation spacing
         text = ' '.join(tokens)
-        text = re.sub(r'\s+([.,!?])', r'\1', text)
+        # Remove spaces before common punctuation
+        text = re.sub(r'\s+([.,!?;:\)\]\}])', r'\1', text)
+        # Remove spaces after opening brackets
+        text = re.sub(r'([\(\[\{])\s+', r'\1', text)
+        # Fix contractions like i ' m -> i'm
+        text = re.sub(r"(\w)\s+'\s+(\w)", r"\1'\2", text)
         return text
     
     def save(self, filepath: str):

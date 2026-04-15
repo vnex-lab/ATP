@@ -801,8 +801,8 @@ def chat_interface_section():
         for attempt in range(max_retries):
             # Check model type and use appropriate generate method
             if hasattr(model, 'generate_response'):
-                # RNN model
-                input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=False))
+                # RNN model - use special tokens to match training
+                input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=True))
                 response_indices = model.generate_response(input_seq, temperature=temperature)
                 response_text = tokenizer.decode(response_indices.tolist())
             else:

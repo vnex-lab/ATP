@@ -196,7 +196,7 @@ class VnexAIChatbot:
                 hidden_states.append(h)
         else:
             # Generation mode with temperature sampling
-            x_t = self.embedding[0].reshape(1, -1)  # Start with <START> token
+            x_t = self.embedding[1].reshape(1, -1)  # Start with <START> token (index 1)
             for t in range(self.max_length):
                 h = self._tanh(np.dot(x_t, self.Wxh_dec) + np.dot(h, self.Whh_dec) + self.bh_dec)
                 y = np.dot(h, self.Why) + self.by
