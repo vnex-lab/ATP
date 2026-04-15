@@ -1053,6 +1053,111 @@ def export_model_section():
 
     st.divider()
 
+    # ── Ollama Modelfile & Push Guide ─────────────────────────────────────────
+    st.subheader("🦙 Publish to Ollama Registry")
+    st.write(
+        "Follow these steps to share your model on **ollama.com** so anyone can "
+        "`ollama pull` and run it."
+    )
+
+    with st.expander("⚙️ Modelfile Settings", expanded=True):
+        ollama_username = st.text_input(
+            "Your Ollama username:",
+            value="yourusername",
+            help="Your username on ollama.com — needed for the push command."
+        )
+        system_prompt = st.text_area(
+            "System prompt (what your bot says about itself):",
+            value=f"You are {model_name}, a custom AI assistant trained with VnexAI. Be helpful, friendly, and concise.",
+            height=80
+        )
+        num_ctx = st.number_input(
+            "Context length (num_ctx):",
+            min_value=64, max_value=4096, value=512, step=64,
+            help="How many tokens of context the model uses. Keep it ≤ your max_seq_len."
+        )
+        temperature_val = st.slider(
+            "Default temperature:", 0.1, 2.0, 0.8, 0.1,
+            help="Same temperature slider as the Chat Interface."
+        )
+        extra_stop = st.text_input(
+            "Extra stop token (optional):",
+            value="",
+            help="e.g. </s> or [END]. <END> is always included automatically."
+        )
+
+    # Build the Modelfile text
+    stop_lines = 'PARAMETER stop "<END>"'
+    if extra_stop.strip():
+        stop_lines += f'\nPARAMETER stop "{extra_stop.strip()}"'
+
+    arch_note = (
+        f"# Architecture : {'RNN encoder-decoder' if is_rnn else 'Transformer encoder-decoder'}\n"
+        f"# Trained with : VnexAI (NumPy/CuPy from scratch)\n"
+        f"# Vocab size   : {model.vocab_size}\n"
+    )
+    if is_rnn:
+        arch_note += f"# Hidden dim   : {model.hidden_dim}\n"
+    else:
+        arch_note += f"# Layers/Heads : {model.num_layers} / {model.num_heads}\n"
+
+    modelfile_text = f"""FROM ./{model_name}.gguf
+
+{arch_note}
+SYSTEM \"\"\"{system_prompt}\"\"\"
+
+PARAMETER temperature {temperature_val}
+PARAMETER num_ctx {num_ctx}
+{stop_lines}
+
+TEMPLATE \"\"\"{{{{ .Prompt }}}}\"\"\"
+"""
+
+    st.subheader("📄 Generated Modelfile")
+    st.code(modelfile_text, language="dockerfile")
+
+    modelfile_bytes = modelfile_text.encode("utf-8")
+    st.download_button(
+        label="📥 Download Modelfile",
+        data=modelfile_bytes,
+        file_name="Modelfile",
+        mime="text/plain",
+        key="download_modelfile_btn"
+    )
+
+    st.subheader("🚀 Step-by-Step: Push to Ollama")
+
+    full_model_tag = f"{ollama_username}/{model_name}"
+
+    st.markdown("**1. Make sure Ollama is installed on your computer**")
+    st.code("curl -fsSL https://ollama.com/install.sh | sh", language="bash")
+
+    st.markdown("**2. Put these two files in the same folder:**")
+    st.code(f"{model_name}.gguf\nModelfile", language="text")
+
+    st.markdown("**3. Create the model locally from your GGUF + Modelfile:**")
+    st.code(f"ollama create {full_model_tag} -f Modelfile", language="bash")
+
+    st.markdown("**4. Test it runs on your machine:**")
+    st.code(f"ollama run {full_model_tag}", language="bash")
+
+    st.markdown("**5. Log in to Ollama (first time only):**")
+    st.code("ollama login", language="bash")
+
+    st.markdown("**6. Push to the Ollama registry so others can download it:**")
+    st.code(f"ollama push {full_model_tag}", language="bash")
+
+    st.markdown("**7. Share this command with others:**")
+    st.code(f"ollama run {full_model_tag}", language="bash")
+
+    st.info(
+        f"Once pushed, your model will be visible at: **https://ollama.com/{full_model_tag}**\n\n"
+        "Anyone with Ollama installed can then run it with the command above — "
+        "no Python or VnexAI required on their end."
+    )
+
+    st.divider()
+
     # ── Model info panel ──────────────────────────────────────────────────────
     st.subheader("Model Information")
     if is_rnn:

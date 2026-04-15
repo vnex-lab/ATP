@@ -17,6 +17,14 @@ Preferred communication style: Simple, everyday language.
 - Fixed: Chat interface was encoding user input without special tokens, but training used them — now consistent
 - Fixed: Tokenizer decode only cleaned up `.,!?` spacing; now also cleans `()[]{}` and contractions like `i ' m` → `i'm`
 
+**Ollama Modelfile Generator & Push Guide** (April 15, 2026)
+- Added full "Publish to Ollama Registry" section on the Export page
+- Modelfile settings: Ollama username, system prompt, context length, temperature, stop tokens
+- Live Modelfile preview (updates as you type) with one-click download
+- Step-by-step push guide with copy-paste terminal commands (install, create, test, login, push, share)
+- Model tag auto-formatted as `username/model-name`
+- Link to `https://ollama.com/<username>/<model>` shown after push
+
 **The Stack / Code Parquet Support** (April 15, 2026)
 - Added `parse_code_parquet()` helper that auto-detects code-file Parquet datasets (any file with a `content` column)
 - Strategy 1: Extracts Python function + docstring pairs as user/bot training data (`"Write a Python function that: <docstring>"` → `<code>`)
