@@ -2,230 +2,107 @@
 
 ## Overview
 
-VnexAI is a custom chatbot training platform built from scratch using NumPy/CuPy, with a Streamlit-based web interface. The application enables users to train conversational AI models using either RNN or Transformer architectures. Users can upload conversation data or code debugging data, choose between RNN (fast, basic) or Transformer (smart, attention-based like ChatGPT), configure the neural network architecture, train the model from scratch with GPU acceleration, test it in a chat interface with temperature control, and export the trained model as a .bin file for deployment.
+VnexAI is a custom chatbot training platform enabling users to build conversational AI models using either RNN or Transformer architectures. It allows users to upload conversation or code debugging data, configure neural network parameters, train models with GPU acceleration, test them in a chat interface, and export trained models for deployment. The platform aims to provide a comprehensive, from-scratch solution for custom AI model creation, focusing on transparency and control over the model architecture.
 
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
 
-## Recent Changes
-
-### April 2026 - Transformer Backward Pass Overhaul + Intelligence Test
-
-**Critical Transformer Training Bug Fixed** (April 16, 2026)
-- Root cause: `_backward_and_update` only trained embedding and output layer — all FF and attention weights (80%+ of model) were FROZEN at random values forever
-- Fix: Added `_encode_with_cache` and `_decode_with_cache` to capture all forward-pass intermediates
-- Added `_ff_backward` helper: properly computes d_W1, d_b1, d_W2, d_b2 through FF sub-layers with ReLU backward and residual connections
-- Both encoder and decoder FF layers now trained properly on every batch
-- Result: loss improvement increased from 19% to 24% per training run (tiny test model)
-- Fixed: Transformer GPU detection now properly validates CuPy before using it (was crashing on CUDA driver error even when falling back to CPU)
-- Fixed: Generation crash when sequence length exceeded `max_seq_len` during autoregressive decoding — now uses sliding window `generated[-max_seq_len:]`
-- Fixed: Empty responses — `<END>` token now blocked for first 2 content tokens
-
-### April 2026 - 5 Root-Cause "AI Stupidity" Bug Fixes
-
-**All 5 Root-Cause Inference/Training Bugs Fixed** (April 15, 2026)
-- Fixed: RNN `compute_loss` was comparing `outputs[t]` vs `targets[t]` (current token) — now correctly predicts `targets[t+1]` (next token). This was the most critical bug.
-- Fixed: RNN `backward()` was using `decoder_hidden_states[t]` for the output gradient — now correctly uses `decoder_hidden_states[t+1]` (the state that produced output[t]) in two places (dWhy and dh_raw tanh derivative).
-- Fixed: RNN `backward()` was using `decoder_hidden_states[t-1]` for `dWhh_dec` — now correctly uses `decoder_hidden_states[t]` (previous state for recurrence gradient).
-- Fixed: Bias gradients (`dbh_enc`, `dbh_dec`, `dby`) were missing from gradient clipping — now included in clip list. Prevents exploding biases.
-- Fixed: Transformer `train_batch()` decayed LR every batch (`0.995^N_batches ≈ 0`) — moved to `step_lr()` called once per epoch from app.py. LR now decays 2% per epoch instead of crashing.
-- Added `step_lr()` method to both RNN and Transformer. Called from `app.py` training loop after each epoch (includes LR printed in status bar and console).
-- Sanity test: 20-epoch tiny training run verified loss drops 2.84 → 0.06 and model correctly generates responses.
-
-**Critical RNN Generation Bug Fixed** (April 15, 2026)
-- Fixed: RNN was starting generation from `<PAD>` token (index 0) instead of `<START>` (index 1) — every response was broken from step 1
-- Fixed: Chat interface was encoding user input without special tokens, but training used them — now consistent
-- Fixed: Tokenizer decode only cleaned up `.,!?` spacing; now also cleans `()[]{}` and contractions like `i ' m` → `i'm`
-
-**Ollama Modelfile Generator & Push Guide** (April 15, 2026)
-- Added full "Publish to Ollama Registry" section on the Export page
-- Modelfile settings: Ollama username, system prompt, context length, temperature, stop tokens
-- Live Modelfile preview (updates as you type) with one-click download
-- Step-by-step push guide with copy-paste terminal commands (install, create, test, login, push, share)
-- Model tag auto-formatted as `username/model-name`
-- Link to `https://ollama.com/<username>/<model>` shown after push
-
-**The Stack / Code Parquet Support** (April 15, 2026)
-- Added `parse_code_parquet()` helper that auto-detects code-file Parquet datasets (any file with a `content` column)
-- Strategy 1: Extracts Python function + docstring pairs as user/bot training data (`"Write a Python function that: <docstring>"` → `<code>`)
-- Strategy 2 (fallback): Splits code files in thirds as code-completion pairs when no docstrings found
-- Filters to Python-only rows when a `lang` column exists
-- Both the Data Upload section and the Training sidebar now handle The Stack format
-- Existing conversation Parquet files are unaffected — detection is based on column presence
-
-### October 2025 - Transformer Architecture Added! 🚀
-
-**Transformer Model Implementation** (October 16, 2025)
-- Added full Transformer architecture with multi-head attention mechanism
-- Encoder-decoder structure with self-attention and cross-attention
-- Positional encoding for word order understanding
-- Layer normalization for stable deep network training
-- Configurable: attention heads (1-32), layers (1-24), feed-forward dim (128-65536)
-- Same GPU/CPU compatibility as RNN (CuPy/NumPy)
-- Users can now choose: RNN (fast, basic) or Transformer (smart, like ChatGPT!)
-- Transformer benefits: better context, attention mechanism, scalable to 1B+ params
-
-### October 2025 - Major Performance & Quality Updates
-
-**Batch Training Implementation** (October 16, 2025)
-- Added batch processing for GPU optimization (batch sizes 1-128)
-- Implemented gradient accumulation across batches for stable training
-- 30-50x speed improvement on GPU vs single-sample training
-- Batch size recommendations: GTX 1650 (32-64), RTX 3060 (64-128), CPU (8-16)
-- Console logging shows batches per epoch and samples per batch
-
-**Temperature Sampling for Generation** (October 16, 2025)
-- Replaced greedy sampling (argmax) with temperature-based probability sampling
-- Added temperature slider in chat interface (0.1-2.0, default 0.8)
-- Fixed repetitive output issue (comma/character spam) with probabilistic token selection
-- Lower temperature = focused/repetitive, Higher temperature = creative/random
-- CuPy/NumPy compatibility for random sampling across CPU and GPU
-
-**Training Progress & Logging** (October 16, 2025)
-- Removed spinner blocking to enable real-time progress bar updates
-- Added detailed console logging: batch progress, loss per batch, epoch summaries
-- Training start info: total samples, batches per epoch, GPU/CPU mode indicator
-- Training end summary: total batches processed, loss improvement percentage
-- Visual feedback for training progression in both UI and console
-
-**GPU Compatibility Fixes** (October 16, 2025)
-- Fixed CuPy-NumPy implicit conversion errors in loss calculation
-- All loss values converted to Python floats for compatibility
-- Fixed CuPy random.choice() size parameter requirement
-- Automatic GPU array conversion to CPU for operations requiring NumPy
-- Ensures seamless operation on both GPU and CPU environments
-
 ## System Architecture
 
 ### Frontend Architecture
 
-**Technology**: Streamlit web framework with interactive widgets and real-time updates
+**Technology**: Streamlit for the web interface, providing interactive widgets and real-time updates.
 
-**Design Pattern**: Session state management for persisting model, tokenizer, and training data across user interactions
+**Design Pattern**: Session state management to maintain model, tokenizer, and training data across user interactions.
 
 **Key Features**:
-- Wide layout configuration with expandable sidebar for navigation
-- Custom CSS styling for chat interface and visual presentation
-- Interactive plotly-based visualizations for training loss curves
-- Multi-step workflow: data upload → model setup → training → chat interface → export
-
-**Supported Data Formats**:
-- **JSON**: Standard conversation format `[{"user": "...", "bot": "..."}, ...]`
-- **JSONL**: JSON Lines format (one object per line)
-- **CSV/TSV**: Two-column format with flexible headers (user/bot, question/answer, input/output, etc.)
-- **Code debugging JSON**: Objects with `original_src` and `changed_src` fields
-- **Numbered JSON text**: Format like `0:{...} 1:{...}` style entries
-- **Line-by-line text**: Multiple separators supported (`|`, `→`, `-`, tab) with flexible labels
-
-**Rationale**: Streamlit provides rapid prototyping for chatbot applications with minimal frontend code while maintaining interactivity. Session state prevents data loss during user navigation and interactions.
+- Wide layout with an expandable sidebar.
+- Custom CSS for styling.
+- Interactive Plotly visualizations for training loss.
+- Multi-step workflow: data upload, model setup, training, chat interface, and export.
+- Supports various data formats: JSON, JSONL, CSV/TSV (two-column), code debugging JSON (`original_src`, `changed_src`), numbered JSON text, and line-by-line text with multiple separators. Automatically detects and converts "The Stack" Parquet datasets.
 
 ### Backend Architecture
 
 **Core Components**:
 
-1. **VnexAI Chatbot Model** (`chatbot_model.py`)
-   - Pure NumPy implementation of sequence-to-sequence RNN architecture
-   - Encoder-decoder RNN for conversation modeling
-   - Custom gradient descent optimization with backpropagation through time
-   - **Batch training** with gradient accumulation (1-512 samples per batch)
-   - **Temperature sampling** for diverse text generation (0.1-2.0 temperature range)
-   - Configurable embedding and hidden dimensions
-   - Supports text generation with autoregressive decoding
-   - Binary (.bin) model export using pickle serialization
+1.  **VnexAI Chatbot Model (`chatbot_model.py`)**:
+    -   Pure NumPy (with CuPy for GPU) implementation of a sequence-to-sequence RNN.
+    -   Encoder-decoder architecture with custom gradient descent and backpropagation through time.
+    -   Supports batch training with gradient accumulation and temperature sampling for generation.
+    -   Configurable embedding and hidden dimensions.
+    -   Exports as `.bin` files via pickle.
 
-2. **Transformer Chatbot Model** (`transformer_model.py`)
-   - Pure NumPy/CuPy implementation of Transformer architecture
-   - Multi-head attention mechanism (1-32 heads) for context understanding
-   - Encoder-decoder structure with self-attention and cross-attention
-   - Positional encoding for word order without recurrence
-   - Layer normalization for stable deep network training
-   - Configurable: layers (1-24), heads, feed-forward dim (128-65536)
-   - **Same batch training** with gradient accumulation (1-512 samples per batch)
-   - **Temperature sampling** for creative generation
-   - Scales to 1B+ parameters for RTX 4090/5090
-   - Binary (.bin) model export using pickle serialization
+2.  **Transformer Chatbot Model (`transformer_model.py`)**:
+    -   Pure NumPy/CuPy implementation of a Transformer architecture.
+    -   Multi-head attention mechanism with encoder-decoder structure (self-attention and cross-attention).
+    -   Includes positional encoding and layer normalization.
+    -   Configurable layers, attention heads, and feed-forward dimensions.
+    -   Supports batch training with gradient accumulation and temperature sampling.
+    -   Exports as `.bin` files via pickle.
 
-3. **Chatbot Tokenizer** (`chatbot_tokenizer.py`)
-   - Vocabulary building from training text
-   - Text tokenization with special tokens (<PAD>, <START>, <END>, <UNK>)
-   - Encode/decode functionality for text ↔ token indices conversion
-   - Configurable vocabulary size with frequency-based selection
-   - Binary (.bin) tokenizer export for deployment
+3.  **Chatbot Tokenizer (`chatbot_tokenizer.py`)**:
+    -   Builds vocabulary from training text.
+    -   Tokenizes text with special tokens (`<PAD>`, `<START>`, `<END>`, `<UNK>`).
+    -   Configurable vocabulary size based on frequency.
+    -   Exports as `.bin` files.
 
-3. **Data Processing** (`app.py`)
-   - Multi-format data loading (JSON, text files)
-   - Code debugging format converter (original_src → changed_src)
-   - Numbered JSON entry parser
-   - Automatic format detection and conversion
-   - Training data preview and validation
+4.  **Data Processing (`app.py`)**:
+    -   Handles multi-format data loading and automatic format detection.
+    -   Includes specific parsers for code debugging formats and numbered JSON.
 
 **Design Decisions**:
-
-- **GPU Acceleration Support**: Automatically detects and uses CuPy for GPU acceleration when available, falls back to NumPy for CPU. Provides 10-100x speedup for training on GPU-enabled systems without code changes.
-
-- **NumPy/CuPy implementation**: Provides full control and transparency over the model architecture without framework dependencies. Educational value for understanding chatbot mechanics from scratch. GPU support via CuPy maintains identical API.
-
-- **Sequence-to-sequence architecture**: Simple RNN-based encoder-decoder enables conversation modeling and code transformation tasks.
-
-- **Flexible data formats**: Supports multiple file formats (JSON, JSONL, CSV, TSV, text) and conversational styles to accommodate various training data sources including code debugging datasets.
-
-- **Binary export**: .bin file format (pickle) enables easy model deployment and sharing for use with other platforms. Arrays are converted to CPU (NumPy) before saving for compatibility.
+-   **GPU Acceleration**: Automatic detection and utilization of CuPy for GPU acceleration, falling back to NumPy for CPU, offering significant speedups.
+-   **NumPy/CuPy Implementation**: Provides granular control and transparency over the neural network mechanics without external deep learning frameworks.
+-   **Sequence-to-sequence**: Enables various tasks like conversation modeling and code transformation.
+-   **Flexible Data Formats**: Accommodates diverse training data, including code debugging datasets.
+-   **Binary Export**: Uses pickle for `.bin` file export, facilitating easy model deployment.
 
 ### Data Processing Pipeline
 
 **Flow**:
-1. CSV data upload through Streamlit file uploader
-2. Automatic feature type detection and classification/regression determination
-3. Configurable preprocessing with sklearn transformers
-4. Train/validation/test splitting with user-defined ratios
-5. Feature scaling and encoding persistence for inference
-
-**Design Choice**: Sklearn preprocessing maintains compatibility with industry standards and provides robust, tested implementations. Preprocessor state is stored in session to enable consistent transformations during prediction.
+1.  CSV data upload via Streamlit.
+2.  Automatic feature type detection.
+3.  Configurable preprocessing using scikit-learn transformers.
+4.  Train/validation/test splitting.
+5.  Feature scaling and encoding persistence for inference.
 
 ### Visualization & Metrics
 
-**Technology**: Plotly for interactive, publication-quality visualizations
+**Technology**: Plotly for interactive visualizations.
 
 **Metrics System**:
-- Classification: Accuracy, confusion matrix, classification report
-- Regression: MSE, MAE, R² score
-- Training monitoring: Loss and accuracy curves with validation metrics
-
-**Rationale**: Plotly enables interactive exploration of results, zoom capabilities, and professional aesthetics. Subplot layouts allow simultaneous comparison of training and validation performance.
+-   Classification: Accuracy, confusion matrix, classification report.
+-   Regression: MSE, MAE, R² score.
+-   Training monitoring: Loss and accuracy curves.
 
 ## External Dependencies
 
 ### Python Libraries
 
 **Core ML/Data Processing**:
-- `numpy`: Numerical computing for neural network implementation
-- `pandas`: Data manipulation and CSV handling
-- `scikit-learn`: Preprocessing utilities (StandardScaler, LabelEncoder, OneHotEncoder, train_test_split), evaluation metrics
+-   `numpy`: Numerical computing.
+-   `cupy`: GPU acceleration.
+-   `pandas`: Data manipulation.
+-   `scikit-learn`: Preprocessing, metrics.
 
 **Visualization**:
-- `plotly`: Interactive plotting library for training history and performance visualization
-- `matplotlib`: Secondary plotting support
-- `seaborn`: Statistical visualization enhancement
+-   `plotly`: Interactive plotting.
+-   `matplotlib`: Secondary plotting.
+-   `seaborn`: Statistical visualization.
 
 **Web Framework**:
-- `streamlit`: Web application framework for the user interface
+-   `streamlit`: User interface framework.
 
 ### Data Storage
 
-**Format**: In-memory storage using Streamlit session state
+**Format**: In-memory using Streamlit session state.
 
-**Storage Objects**:
-- Trained model (VnexAI instance with weights and biases)
-- Preprocessor state (scalers, encoders, feature metadata)
-- Dataset splits (X_train, X_val, X_test, y_train, y_val, y_test)
-
-**Rationale**: Session-based storage eliminates need for external database while maintaining user context during application lifecycle. For production deployment, this could be extended to persistent storage (database or file system) for model versioning and retrieval.
+**Storage Objects**: Trained model, preprocessor state, dataset splits.
 
 ### Model Persistence
 
-**Format**: JSON serialization for model weights, biases, and configuration
+**Format**: JSON serialization for model parameters and configuration.
 
-**Export Capability**: ZIP file generation containing model artifacts and preprocessor state
-
-**Design Decision**: JSON provides human-readable model inspection and cross-platform compatibility. Future enhancement could include pickle serialization or ONNX export for production deployment scenarios.
+**Export Capability**: ZIP file generation containing model artifacts.
