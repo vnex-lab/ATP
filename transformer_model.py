@@ -20,17 +20,38 @@ except ImportError:
     GPU_AVAILABLE = False
 
 class TransformerChatbot:
-    def __init__(self, vocab_size, embed_dim=256, num_heads=8, num_layers=4, 
-                 ff_dim=1024, max_seq_len=50, learning_rate=0.001):
-        self.vocab_size = vocab_size
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.num_layers = num_layers
-        self.ff_dim = ff_dim
-        self.max_seq_len = max_seq_len
+    def __init__(self, vocab_size, embed_dim=256, num_heads=8, num_layers=4,
+                 ff_dim=1024, max_seq_len=50, learning_rate=0.003,
+                 optimizer='adam', weight_decay=0.01,
+                 scheduler='cosine', warmup_epochs=5,
+                 dropout_rate=0.1, grad_clip=5.0):
+        self.vocab_size   = vocab_size
+        self.embed_dim    = embed_dim
+        self.num_heads    = num_heads
+        self.num_layers   = num_layers
+        self.ff_dim       = ff_dim
+        self.max_seq_len  = max_seq_len
         self.learning_rate = learning_rate
+        self.initial_lr   = learning_rate          # needed for cosine/warmup schedules
+        self.current_epoch = 0
         self.gpu_available = GPU_AVAILABLE
         self.xp = cp if GPU_AVAILABLE else np
+
+        # ---- Optimizer ----
+        self.optimizer    = optimizer.lower()      # sgd | adam | adamw
+        self.weight_decay = weight_decay           # L2 reg (adamw)
+        self.grad_clip    = grad_clip
+        self.opt_m        = {}                     # Adam 1st moment
+        self.opt_v        = {}                     # Adam 2nd moment
+        self.opt_t        = 0                      # Adam step counter
+
+        # ---- Scheduler ----
+        self.scheduler    = scheduler.lower()      # constant | linear | cosine | warmup_cosine | warmup_linear
+        self.warmup_epochs = int(warmup_epochs)
+
+        # ---- Regularisation ----
+        self.dropout_rate = float(dropout_rate)    # 0.0 = off
+        self.training     = True                   # False during generate()
         
         if self.embed_dim % self.num_heads != 0:
             raise ValueError(f"embed_dim ({embed_dim}) must be divisible by num_heads ({num_heads})")
@@ -58,11 +79,12 @@ class TransformerChatbot:
         print(f"Transformer Model Initialized!")
         print(f"   GPU: {'Enabled (CuPy)' if GPU_AVAILABLE else 'Disabled (NumPy)'}")
         print(f"   Vocab size: {vocab_size:,}")
-        print(f"   Embed dim: {embed_dim}")
-        print(f"   Attention heads: {num_heads}")
-        print(f"   Layers: {num_layers}")
-        print(f"   Feed-forward dim: {ff_dim}")
-        
+        print(f"   Embed dim: {embed_dim}  |  Heads: {num_heads}  |  Layers: {num_layers}")
+        print(f"   FF dim: {ff_dim}  |  Max seq len: {max_seq_len}")
+        print(f"   Optimizer: {optimizer.upper()}  |  Scheduler: {scheduler}")
+        print(f"   LR: {learning_rate}  |  Weight decay: {weight_decay}  |  Dropout: {dropout_rate}")
+        print(f"   Warmup epochs: {warmup_epochs}  |  Grad clip: {grad_clip}")
+
         total_params = self._count_parameters()
         print(f"   📊 Total parameters: {total_params:,}")
         if total_params >= 1_000_000_000:
@@ -279,11 +301,71 @@ class TransformerChatbot:
         
         return total_loss / batch_size
 
-    def step_lr(self, decay: float = 0.99):
-        """Call once per epoch to decay learning rate by 1% (not 2% — less aggressive
-        so the model keeps learning deep into training)."""
-        if self.learning_rate > 1e-5:
-            self.learning_rate *= decay
+    def _opt_update(self, param, grad, param_id, lr_scale=1.0):
+        """Apply SGD / Adam / AdamW update in-place on `param`."""
+        xp = self.xp
+        effective_lr = self.learning_rate * lr_scale
+        clipped = xp.clip(grad, -self.grad_clip, self.grad_clip)
+
+        if self.optimizer == 'sgd':
+            param -= effective_lr * clipped
+            return
+
+        # ---- Adam / AdamW ----
+        if param_id not in self.opt_m:
+            self.opt_m[param_id] = xp.zeros_like(param)
+            self.opt_v[param_id] = xp.zeros_like(param)
+
+        b1, b2, eps = 0.9, 0.999, 1e-8
+        self.opt_m[param_id] = b1 * self.opt_m[param_id] + (1 - b1) * clipped
+        self.opt_v[param_id] = b2 * self.opt_v[param_id] + (1 - b2) * clipped ** 2
+
+        t = max(self.opt_t, 1)
+        m_hat = self.opt_m[param_id] / (1.0 - b1 ** t)
+        v_hat = self.opt_v[param_id] / (1.0 - b2 ** t)
+        step  = effective_lr * m_hat / (xp.sqrt(v_hat) + eps)
+
+        if self.optimizer == 'adamw':
+            param -= step + effective_lr * self.weight_decay * param
+        else:
+            param -= step
+
+    def step_lr(self, total_epochs=100):
+        """Update learning rate once per epoch according to the chosen scheduler."""
+        import math
+        self.current_epoch += 1
+        epoch = self.current_epoch
+        lr0   = self.initial_lr
+        sched = self.scheduler
+
+        if sched == 'constant':
+            self.learning_rate = lr0
+
+        elif sched == 'linear':
+            if self.learning_rate > 1e-6:
+                self.learning_rate *= 0.99
+
+        elif sched == 'cosine':
+            progress = min(epoch / max(total_epochs, 1), 1.0)
+            self.learning_rate = max(lr0 * 0.5 * (1.0 + math.cos(math.pi * progress)),
+                                     lr0 * 0.01)
+
+        elif sched == 'warmup_cosine':
+            if epoch <= self.warmup_epochs:
+                self.learning_rate = lr0 * epoch / max(self.warmup_epochs, 1)
+            else:
+                rest     = max(total_epochs - self.warmup_epochs, 1)
+                progress = (epoch - self.warmup_epochs) / rest
+                self.learning_rate = max(lr0 * 0.5 * (1.0 + math.cos(math.pi * progress)),
+                                         lr0 * 0.01)
+
+        elif sched == 'warmup_linear':
+            if epoch <= self.warmup_epochs:
+                self.learning_rate = lr0 * epoch / max(self.warmup_epochs, 1)
+            else:
+                rest     = max(total_epochs - self.warmup_epochs, 1)
+                progress = (epoch - self.warmup_epochs) / rest
+                self.learning_rate = max(lr0 * (1.0 - progress), lr0 * 0.01)
     
     def _attn_forward_cached(self, Q, K, V, Wq, Wk, Wv, Wo, mask=None):
         """Multi-head attention — returns output + full cache for Wq/Wk/Wv/Wo backward."""
@@ -315,7 +397,7 @@ class TransformerChatbot:
         return output, cache
 
     def _attn_backward(self, d_out, cache, layer_Wq, layer_Wk, layer_Wv, layer_Wo, lr,
-                        is_self_attn=False):
+                        is_self_attn=False, attn_id='attn'):
         """Full multi-head attention backward. Trains Wq, Wk, Wv, Wo in-place.
 
         is_self_attn=True: Q=K=V come from the same x, so gradient = d_Q + d_K + d_V.
@@ -374,35 +456,42 @@ class TransformerChatbot:
             # cross-attention: K, V come from encoder — only Q gradient flows back to decoder
             d_input = d_Q_in
 
-        # ---- apply all weight updates ----
-        # Wq/Wk: gradients flow through softmax (noisy) → lower LR for stability
-        # Wv: more direct path; Wo: approximate gradient
-        layer_Wo -= (lr * 0.3) * xp.clip(d_Wo, -5, 5)
-        layer_Wv -= (lr * 0.2) * xp.clip(d_Wv, -5, 5)
-        layer_Wq -= (lr * 0.1) * xp.clip(d_Wq, -5, 5)
-        layer_Wk -= (lr * 0.1) * xp.clip(d_Wk, -5, 5)
+        # ---- apply all weight updates via optimizer ----
+        # Wq/Wk: gradient through softmax is noisy → lr_scale 0.1
+        # Wv: more direct value path → lr_scale 0.2; Wo: approx gradient → lr_scale 0.3
+        self._opt_update(layer_Wo, d_Wo, f'{attn_id}_Wo', lr_scale=0.3)
+        self._opt_update(layer_Wv, d_Wv, f'{attn_id}_Wv', lr_scale=0.2)
+        self._opt_update(layer_Wq, d_Wq, f'{attn_id}_Wq', lr_scale=0.1)
+        self._opt_update(layer_Wk, d_Wk, f'{attn_id}_Wk', lr_scale=0.1)
 
         return d_input
+
+    def _apply_dropout(self, x):
+        """Inverted dropout: scale kept activations up so inference needs no scaling."""
+        if self.dropout_rate <= 0.0 or not self.training:
+            return x, None
+        xp = self.xp
+        mask = (xp.random.random(x.shape) > self.dropout_rate).astype(x.dtype)
+        return x * mask / (1.0 - self.dropout_rate), mask
 
     def _encode_with_cache(self, input_seq):
         """Forward pass through encoder, capturing all intermediates for full backward."""
         xp = self.xp
         batch_size, seq_len = input_seq.shape
         x = self.embedding[input_seq] + self.pos_encoding[:seq_len]
-        enc_input_x = x.copy()   # save pre-encoder x for embedding gradient
         cache = []
         for layer in self.encoder_layers:
-            x_before_attn = x
             attn_out, attn_cache = self._attn_forward_cached(x, x, x,
                 layer['Wq'], layer['Wk'], layer['Wv'], layer['Wo'])
             x = self._layer_norm(x + attn_out, layer['ln1_gamma'], layer['ln1_beta'])
             ff_input = x
-            ff_pre  = xp.dot(x, layer['ff_w1']) + layer['ff_b1']
-            ff_relu = xp.maximum(0, ff_pre)
-            ff_out  = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
+            ff_pre   = xp.dot(x, layer['ff_w1']) + layer['ff_b1']
+            ff_relu_raw = xp.maximum(0, ff_pre)
+            ff_relu, drop_mask = self._apply_dropout(ff_relu_raw)
+            ff_out   = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
             x = self._layer_norm(x + ff_out, layer['ln2_gamma'], layer['ln2_beta'])
             cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
-                          'self_attn': attn_cache})
+                          'drop_mask': drop_mask, 'self_attn': attn_cache})
         return x, cache
 
     def _decode_with_cache(self, target_input, encoder_output):
@@ -423,34 +512,43 @@ class TransformerChatbot:
             ff_input = self._layer_norm(x + cross_out, layer['ln2_gamma'], layer['ln2_beta'])
 
             ff_pre  = xp.dot(ff_input, layer['ff_w1']) + layer['ff_b1']
-            ff_relu = xp.maximum(0, ff_pre)
+            ff_relu_raw = xp.maximum(0, ff_pre)
+            ff_relu, drop_mask = self._apply_dropout(ff_relu_raw)
             ff_out  = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
             x = self._layer_norm(ff_input + ff_out, layer['ln3_gamma'], layer['ln3_beta'])
             cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
+                          'drop_mask': drop_mask,
                           'self_attn': self_attn_cache, 'cross_attn': cross_attn_cache})
         return x, cache
 
-    def _ff_backward(self, d_x_out, layer, cache, xp, lr):
-        """Backprop through one FF sub-layer. Returns gradient w.r.t FF input."""
-        ff_input = cache['ff_input']
-        ff_pre   = cache['ff_pre']
-        ff_relu  = cache['ff_relu']
+    def _ff_backward(self, d_x_out, layer, cache, layer_id):
+        """Backprop through one FF sub-layer. Updates weights. Returns gradient w.r.t FF input."""
+        xp = self.xp
+        ff_input   = cache['ff_input']
+        ff_pre     = cache['ff_pre']
+        ff_relu    = cache['ff_relu']          # post-dropout value
+        drop_mask  = cache.get('drop_mask')
         target_len = ff_input.shape[1]
 
-        # d_x_out flows into BOTH the residual and the FF branch
-        d_ff_out = d_x_out  # residual: grad flows through FF branch
+        d_ff_out = d_x_out
 
-        # Through ff_w2
+        # ---- ff_w2 backward ----
         d_W2 = xp.dot(ff_relu.reshape(-1, self.ff_dim).T,
                        d_ff_out.reshape(-1, self.embed_dim))
         d_b2 = xp.sum(d_ff_out.reshape(-1, self.embed_dim), axis=0, keepdims=True)
-        d_ff_relu = xp.dot(d_ff_out.reshape(-1, self.embed_dim),
-                            layer['ff_w2'].T).reshape(1, target_len, self.ff_dim)
+        d_ff_relu_drop = xp.dot(d_ff_out.reshape(-1, self.embed_dim),
+                                 layer['ff_w2'].T).reshape(1, target_len, self.ff_dim)
 
-        # Through ReLU
+        # ---- undo dropout ----
+        if drop_mask is not None:
+            d_ff_relu = d_ff_relu_drop * drop_mask / (1.0 - self.dropout_rate)
+        else:
+            d_ff_relu = d_ff_relu_drop
+
+        # ---- undo ReLU ----
         d_ff_pre = d_ff_relu * (ff_pre > 0)
 
-        # Through ff_w1
+        # ---- ff_w1 backward ----
         d_W1 = xp.dot(ff_input.reshape(-1, self.embed_dim).T,
                        d_ff_pre.reshape(-1, self.ff_dim))
         d_b1 = xp.sum(d_ff_pre.reshape(-1, self.ff_dim), axis=0, keepdims=True)
@@ -459,11 +557,11 @@ class TransformerChatbot:
         d_ff_input = xp.dot(d_ff_pre.reshape(-1, self.ff_dim),
                              layer['ff_w1'].T).reshape(ff_input.shape)
 
-        # Clip and update FF weights
-        layer['ff_w1'] -= lr * xp.clip(d_W1, -5, 5)
-        layer['ff_b1'] -= lr * xp.clip(d_b1, -5, 5)
-        layer['ff_w2'] -= lr * xp.clip(d_W2, -5, 5)
-        layer['ff_b2'] -= lr * xp.clip(d_b2, -5, 5)
+        # Update FF weights via optimizer
+        self._opt_update(layer['ff_w1'], d_W1, f'{layer_id}_ff_w1')
+        self._opt_update(layer['ff_b1'], d_b1, f'{layer_id}_ff_b1')
+        self._opt_update(layer['ff_w2'], d_W2, f'{layer_id}_ff_w2')
+        self._opt_update(layer['ff_b2'], d_b2, f'{layer_id}_ff_b2')
 
         # Total gradient back through residual + FF input
         return d_x_out + d_ff_input
@@ -486,31 +584,30 @@ class TransformerChatbot:
         d_W_out = xp.dot(decoder_output.reshape(-1, self.embed_dim).T,
                           d_logits.reshape(-1, self.vocab_size))
         d_b_out = xp.sum(d_logits.reshape(-1, self.vocab_size), axis=0, keepdims=True)
-        self.output_weights -= lr * xp.clip(d_W_out, -5, 5)
-        self.output_bias    -= lr * xp.clip(d_b_out, -5, 5)
+        self._opt_update(self.output_weights, d_W_out, 'out_W')
+        self._opt_update(self.output_bias,    d_b_out, 'out_b')
 
-        # Gradient into the last decoder layer's output
-        d_x = xp.dot(d_logits, self.output_weights.T)   # (1, target_len, embed_dim)
+        # Gradient into the last decoder layer's output (use original output_weights before update)
+        d_x = xp.dot(d_logits, self.output_weights.T)
 
         d_embed = xp.zeros_like(self.embedding)
 
-        # === DECODER LAYERS BACKWARD (deepest first) ===
-        # Flow: output → FF → cross-attention (Wq/Wk/Wv/Wo) → self-attention (Wq/Wk/Wv/Wo)
-        for layer, cache in zip(reversed(self.decoder_layers), reversed(dec_cache)):
-            # 1. FF sub-layer backward (trains ff_w1, ff_b1, ff_w2, ff_b2)
-            d_x = self._ff_backward(d_x, layer, cache, xp, lr)
+        # Increment Adam step counter once per forward-backward pass
+        self.opt_t += 1
 
-            # 2. Cross-attention backward (Q=decoder x, K/V=encoder — only Q grad returned)
+        # === DECODER LAYERS BACKWARD (deepest to shallowest) ===
+        n = self.num_layers
+        for i, (layer, cache) in enumerate(zip(reversed(self.decoder_layers), reversed(dec_cache))):
+            li = n - 1 - i   # actual layer index (for unique param IDs)
+            d_x = self._ff_backward(d_x, layer, cache, f'dec{li}')
             d_x = self._attn_backward(d_x, cache['cross_attn'],
                                        layer['Wq_cross'], layer['Wk_cross'],
                                        layer['Wv_cross'], layer['Wo_cross'], lr,
-                                       is_self_attn=False)
-
-            # 3. Self-attention backward (Q=K=V=x — full gradient = Q+K+V)
+                                       is_self_attn=False, attn_id=f'dec{li}_cross')
             d_x = self._attn_backward(d_x, cache['self_attn'],
                                        layer['Wq_self'], layer['Wk_self'],
                                        layer['Wv_self'], layer['Wo_self'], lr,
-                                       is_self_attn=True)
+                                       is_self_attn=True, attn_id=f'dec{li}_self')
 
         # Gradient to target embeddings
         for t in range(target_input.shape[1]):
@@ -519,22 +616,19 @@ class TransformerChatbot:
                 d_embed[tok] += d_x[0, t, :]
 
         # === ENCODER LAYERS BACKWARD ===
-        # Propagate decoder gradient to encoder via cross-attention key/value inputs
         enc_seq_len = input_seq.shape[1]
         d_enc = xp.broadcast_to(
             xp.mean(d_x, axis=1, keepdims=True),
             (1, enc_seq_len, self.embed_dim)
         ).copy()
 
-        for layer, cache in zip(reversed(self.encoder_layers), reversed(enc_cache)):
-            # 1. FF sub-layer backward
-            d_enc = self._ff_backward(d_enc, layer, cache, xp, lr)
-
-            # 2. Self-attention full backward (Q=K=V=x — full gradient = Q+K+V)
+        for i, (layer, cache) in enumerate(zip(reversed(self.encoder_layers), reversed(enc_cache))):
+            li = n - 1 - i
+            d_enc = self._ff_backward(d_enc, layer, cache, f'enc{li}')
             d_enc = self._attn_backward(d_enc, cache['self_attn'],
                                          layer['Wq'], layer['Wk'],
                                          layer['Wv'], layer['Wo'], lr,
-                                         is_self_attn=True)
+                                         is_self_attn=True, attn_id=f'enc{li}_self')
 
         # Gradient to input embeddings
         for t in range(input_seq.shape[1]):
@@ -542,10 +636,11 @@ class TransformerChatbot:
             if tok < self.vocab_size:
                 d_embed[tok] += d_enc[0, t, :] * 0.5
 
-        # === UPDATE EMBEDDINGS ===
-        self.embedding -= lr * xp.clip(d_embed, -5, 5)
+        # === UPDATE EMBEDDINGS (use optimizer) ===
+        self._opt_update(self.embedding, d_embed, 'embedding')
     
     def generate(self, input_text, tokenizer, max_length=50, temperature=1.0):
+        self.training = False   # disable dropout during inference
         input_tokens = tokenizer.encode(input_text)
         input_seq = self.xp.array(input_tokens).reshape(1, -1)
         
@@ -577,6 +672,7 @@ class TransformerChatbot:
             if next_token != tokenizer.word2idx['<END>']:
                 generated.append(next_token)
         
+        self.training = True    # restore training mode
         return tokenizer.decode(generated[1:])
     
     def save(self, filepath):

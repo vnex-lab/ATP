@@ -42,6 +42,15 @@ Preferred communication style: Simple, everyday language.
     -   Supports batch training with gradient accumulation and temperature sampling.
     -   Exports as `.bin` files via pickle.
 
+2.5. **Advanced Training Engine (inside `transformer_model.py`)**:
+    -   Full Adam / AdamW optimizer with per-parameter momentum + velocity (lazy init, bias correction).
+    -   SGD also supported.
+    -   5 LR schedulers: `constant`, `linear`, `cosine`, `warmup_cosine`, `warmup_linear`.
+    -   `warmup_epochs` ramps LR from 0 → initial over N epochs before main schedule.
+    -   Inverted dropout on all feed-forward layers; dropout disabled automatically during `generate()`.
+    -   Gradient clipping (global norm).
+    -   All attention matrices (Wq, Wk, Wv, Wo) now fully trained via `_attn_backward()`.
+
 3.  **Chatbot Tokenizer (`chatbot_tokenizer.py`)**:
     -   Builds vocabulary from training text.
     -   Tokenizes text with special tokens (`<PAD>`, `<START>`, `<END>`, `<UNK>`).

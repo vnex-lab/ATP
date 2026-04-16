@@ -561,6 +561,31 @@ def model_setup_section():
                 max_length = st.number_input("Max sequence length:", 10, 500, 64, 10)
                 learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.003, 0.0001, format="%.4f",
                                                help="0.003 is a good starting point. Go up to 0.01 if loss barely moves. Lower to 0.001 if loss jumps around.")
+
+                st.write("**⚙️ Training Parameters**")
+                tr_col1, tr_col2 = st.columns(2)
+                with tr_col1:
+                    t_optimizer = st.selectbox("Optimizer:", ["Adam", "AdamW", "SGD"],
+                        help="Adam: best for most cases. AdamW: Adam + weight decay (less overfitting). SGD: simple gradient descent.")
+                    t_scheduler = st.selectbox("LR Scheduler:", ["Warmup + Cosine", "Cosine", "Linear", "Warmup + Linear", "Constant"],
+                        help="Controls how the learning rate changes over training. Warmup+Cosine is the gold standard.")
+                    t_dropout = st.slider("Dropout rate:", 0.0, 0.5, 0.1, 0.05,
+                        help="Randomly drops neurons during training to prevent overfitting. 0.1 is a good default. Use 0.0 for tiny datasets.")
+                with tr_col2:
+                    t_weight_decay = st.number_input("Weight decay:", 0.0, 1.0, 0.01, 0.001, format="%.4f",
+                        help="L2 regularization. Used by AdamW. Higher = stronger regularization. Default 0.01.")
+                    t_warmup_epochs = st.number_input("Warmup epochs:", 0, 50, 5, 1,
+                        help="Gradually ramp up LR from 0 to full value over this many epochs. Prevents unstable early training.")
+                    t_grad_clip = st.number_input("Gradient clip:", 0.1, 50.0, 5.0, 0.5,
+                        help="Max gradient magnitude. Prevents exploding gradients. 5.0 is standard.")
+
+                # map display names to internal names
+                _opt_map   = {"Adam": "adam", "AdamW": "adamw", "SGD": "sgd"}
+                _sched_map = {"Warmup + Cosine": "warmup_cosine", "Cosine": "cosine",
+                              "Linear": "linear", "Warmup + Linear": "warmup_linear",
+                              "Constant": "constant"}
+                t_optimizer_key = _opt_map[t_optimizer]
+                t_scheduler_key = _sched_map[t_scheduler]
                 
                 # Calculate approximate parameters for Transformer
                 # Each attention layer has Wq, Wk, Wv, Wo (4 * embed_dim^2)
@@ -622,7 +647,13 @@ def model_setup_section():
                         num_layers=num_layers,
                         ff_dim=ff_dim,
                         max_seq_len=max_length,
-                        learning_rate=learning_rate
+                        learning_rate=learning_rate,
+                        optimizer=t_optimizer_key,
+                        weight_decay=float(t_weight_decay),
+                        scheduler=t_scheduler_key,
+                        warmup_epochs=int(t_warmup_epochs),
+                        dropout_rate=float(t_dropout),
+                        grad_clip=float(t_grad_clip)
                     )
                     st.session_state.model_type = "Transformer"
                     
@@ -716,12 +747,13 @@ def training_section():
 
     st.write("### 💡 Transformer Training Tips:")
     st.info("""
-    - **Best settings to start:** embed=256, heads=8, layers=4, ff=1024, LR=0.003
-    - **Loss stuck near the starting value?** Your LR is too low. Try 0.005 or 0.01.
-    - **Loss bouncing up and down wildly?** Your LR is too high. Try 0.001.
-    - **Loss drops then plateaus early?** Train longer — try 100–200 epochs. LR now decays only 1% per epoch so it stays active the whole time.
-    - **Repetitive or short answers?** Raise temperature in the Chat tab (try 1.0–1.4).
-    - **Still getting weird responses after 100 epochs?** You need more training data — aim for 1,000+ pairs.
+    - **Recommended starter settings:** embed=256, heads=8, layers=4, ff=1024, LR=0.003, Optimizer=Adam, Scheduler=Warmup+Cosine
+    - **Adam vs SGD:** Adam typically drops loss 4–5× faster than SGD. Use Adam unless you have a specific reason not to.
+    - **Loss stuck near starting value?** LR is too low — try 0.005 or 0.01.
+    - **Loss bouncing wildly?** LR is too high — try 0.001. Or increase Dropout to 0.2.
+    - **Loss plateaus early?** Train longer (100–200 epochs). Cosine scheduler keeps LR productive the whole time.
+    - **Overfitting (loss drops but chat is bad)?** Increase dropout rate (0.2–0.3) and use AdamW with weight decay 0.01.
+    - **Still word salad after 100 epochs?** You need more data — aim for 1,000+ conversation pairs.
     """)
     
     col1, col2, col3 = st.columns(3)
@@ -818,7 +850,7 @@ def training_section():
 
             # Decay LR once per epoch (both RNN and Transformer have step_lr)
             if hasattr(model, 'step_lr'):
-                model.step_lr()
+                model.step_lr(total_epochs=epochs)
 
             # Print epoch summary
             current_lr = getattr(model, 'learning_rate', '?')
