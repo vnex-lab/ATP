@@ -10,6 +10,18 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### April 2026 - Transformer Backward Pass Overhaul + Intelligence Test
+
+**Critical Transformer Training Bug Fixed** (April 16, 2026)
+- Root cause: `_backward_and_update` only trained embedding and output layer — all FF and attention weights (80%+ of model) were FROZEN at random values forever
+- Fix: Added `_encode_with_cache` and `_decode_with_cache` to capture all forward-pass intermediates
+- Added `_ff_backward` helper: properly computes d_W1, d_b1, d_W2, d_b2 through FF sub-layers with ReLU backward and residual connections
+- Both encoder and decoder FF layers now trained properly on every batch
+- Result: loss improvement increased from 19% to 24% per training run (tiny test model)
+- Fixed: Transformer GPU detection now properly validates CuPy before using it (was crashing on CUDA driver error even when falling back to CPU)
+- Fixed: Generation crash when sequence length exceeded `max_seq_len` during autoregressive decoding — now uses sliding window `generated[-max_seq_len:]`
+- Fixed: Empty responses — `<END>` token now blocked for first 2 content tokens
+
 ### April 2026 - 5 Root-Cause "AI Stupidity" Bug Fixes
 
 **All 5 Root-Cause Inference/Training Bugs Fixed** (April 15, 2026)

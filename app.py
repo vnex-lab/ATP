@@ -194,8 +194,7 @@ def data_upload_section():
                 ]
                 # Multiply samples to simulate a larger dataset for scratch training
                 st.session_state.training_data = samples * 25
-                st.success(f"Loaded {len(st.session_state.training_data)} conversation samples from DailyDialog!")
-                st.rerun()
+                st.success(f"Loaded {len(st.session_state.training_data)} conversation samples from DailyDialog! You can now go to Model Setup.")
 
     elif upload_type == "Upload File":
         uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl', 'parquet'])
