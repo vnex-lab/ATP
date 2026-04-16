@@ -369,8 +369,9 @@ class VnexAIChatbot:
         
         self.embedding -= self.learning_rate * gradients['dembedding']
     
-    def step_lr(self, decay: float = 0.98):
-        """Call once per epoch to decay the learning rate by `decay` factor."""
+    def step_lr(self, decay: float = 0.99):
+        """Call once per epoch to decay the learning rate by 1% (not 2% — keeps
+        learning signal alive much longer into training)."""
         if self.learning_rate > 1e-5:
             self.learning_rate *= decay
 

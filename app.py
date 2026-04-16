@@ -559,8 +559,8 @@ def model_setup_section():
                 ff_dim = st.number_input("Feed-forward dimension:", 128, 65536, 1024, 128,
                                         help="Set this to 4x your embedding_dim for best results.")
                 max_length = st.number_input("Max sequence length:", 10, 500, 64, 10)
-                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.001, 0.0001, format="%.4f",
-                                               help="0.001 is a good starting point. Lower if loss is unstable.")
+                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.003, 0.0001, format="%.4f",
+                                               help="0.003 is a good starting point. Go up to 0.01 if loss barely moves. Lower to 0.001 if loss jumps around.")
                 
                 # Calculate approximate parameters for Transformer
                 # Each attention layer has Wq, Wk, Wv, Wo (4 * embed_dim^2)
@@ -716,15 +716,17 @@ def training_section():
 
     st.write("### 💡 Transformer Training Tips:")
     st.info("""
-    - **Best settings to start:** embed=256, heads=8, layers=4, ff=1024, LR=0.001
-    - **Loss too high after training?** Try more epochs (100+) or a slightly lower LR (0.0005).
-    - **Repetitive answers?** Raise temperature in the Chat tab (try 1.0–1.3).
-    - **Loss not moving?** LR might be too low — try 0.003 or 0.005.
+    - **Best settings to start:** embed=256, heads=8, layers=4, ff=1024, LR=0.003
+    - **Loss stuck near the starting value?** Your LR is too low. Try 0.005 or 0.01.
+    - **Loss bouncing up and down wildly?** Your LR is too high. Try 0.001.
+    - **Loss drops then plateaus early?** Train longer — try 100–200 epochs. LR now decays only 1% per epoch so it stays active the whole time.
+    - **Repetitive or short answers?** Raise temperature in the Chat tab (try 1.0–1.4).
+    - **Still getting weird responses after 100 epochs?** You need more training data — aim for 1,000+ pairs.
     """)
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        epochs = st.number_input("Number of epochs:", 1, 10000, 50, 5)
+        epochs = st.number_input("Number of epochs:", 1, 10000, 100, 5)
     with col2:
         batch_size = st.number_input("Batch size:", 1, 512, 16, 1, 
                                       help="GTX 1650: 32-64 | RTX 3060: 64-128 | RTX 4090: 128-256 | RTX 5090: 256-512")

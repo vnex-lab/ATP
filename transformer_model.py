@@ -279,51 +279,80 @@ class TransformerChatbot:
         
         return total_loss / batch_size
 
-    def step_lr(self, decay: float = 0.98):
-        """Call once per epoch to decay learning rate. Removed per-batch decay
-        which was killing LR (0.995^1500 batches ≈ 0) before training finished."""
+    def step_lr(self, decay: float = 0.99):
+        """Call once per epoch to decay learning rate by 1% (not 2% — less aggressive
+        so the model keeps learning deep into training)."""
         if self.learning_rate > 1e-5:
             self.learning_rate *= decay
     
+    def _attn_forward_cached(self, Q, K, V, Wq, Wk, Wv, Wo, mask=None):
+        """Multi-head attention with pre-Wo output saved for backward pass."""
+        xp = self.xp
+        batch_size, q_len, _ = Q.shape
+        _, k_len, _ = K.shape
+
+        Q_proj = xp.dot(Q, Wq)
+        K_proj = xp.dot(K, Wk)
+        V_proj = xp.dot(V, Wv)
+
+        Q_h = Q_proj.reshape(batch_size, q_len,  self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        K_h = K_proj.reshape(batch_size, k_len,  self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        V_h = V_proj.reshape(batch_size, k_len,  self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+
+        scores = xp.matmul(Q_h, K_h.transpose(0, 1, 3, 2)) / xp.sqrt(self.head_dim)
+        if mask is not None:
+            scores = scores + mask
+        attn_w = self._softmax(scores, axis=-1)
+
+        # Value-weighted sum — this is what we need for d_Wo
+        ctx = xp.matmul(attn_w, V_h)                                   # (B, H, q_len, head_dim)
+        ctx = ctx.transpose(0, 2, 1, 3).reshape(batch_size, q_len, self.embed_dim)  # pre-Wo
+
+        output = xp.dot(ctx, Wo)
+        return output, ctx   # ctx = pre-Wo value, needed for backward
+
     def _encode_with_cache(self, input_seq):
-        """Forward pass through encoder, returning output and intermediates for backprop."""
+        """Forward pass through encoder, capturing FF and Wo intermediates."""
         xp = self.xp
         batch_size, seq_len = input_seq.shape
         x = self.embedding[input_seq] + self.pos_encoding[:seq_len]
         cache = []
         for layer in self.encoder_layers:
-            attn_out, _ = self._multi_head_attention(x, x, x,
+            attn_out, attn_ctx = self._attn_forward_cached(x, x, x,
                 layer['Wq'], layer['Wk'], layer['Wv'], layer['Wo'])
             x = self._layer_norm(x + attn_out, layer['ln1_gamma'], layer['ln1_beta'])
             ff_input = x
-            ff_pre = xp.dot(x, layer['ff_w1']) + layer['ff_b1']
+            ff_pre  = xp.dot(x, layer['ff_w1']) + layer['ff_b1']
             ff_relu = xp.maximum(0, ff_pre)
-            ff_out = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
+            ff_out  = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
             x = self._layer_norm(x + ff_out, layer['ln2_gamma'], layer['ln2_beta'])
-            cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu})
+            cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
+                          'attn_ctx': attn_ctx})
         return x, cache
 
     def _decode_with_cache(self, target_input, encoder_output):
-        """Forward pass through decoder, returning output and intermediates for backprop."""
+        """Forward pass through decoder, capturing FF and Wo intermediates."""
         xp = self.xp
         batch_size, target_len = target_input.shape
         x = self.embedding[target_input] + self.pos_encoding[:target_len]
         causal_mask = self._create_causal_mask(target_len)
         cache = []
         for layer in self.decoder_layers:
-            self_attn_out, _ = self._multi_head_attention(x, x, x,
+            self_out, self_ctx = self._attn_forward_cached(x, x, x,
                 layer['Wq_self'], layer['Wk_self'], layer['Wv_self'], layer['Wo_self'],
                 mask=causal_mask)
-            x = self._layer_norm(x + self_attn_out, layer['ln1_gamma'], layer['ln1_beta'])
-            cross_attn_out, _ = self._multi_head_attention(x, encoder_output, encoder_output,
+            x = self._layer_norm(x + self_out, layer['ln1_gamma'], layer['ln1_beta'])
+
+            cross_out, cross_ctx = self._attn_forward_cached(x, encoder_output, encoder_output,
                 layer['Wq_cross'], layer['Wk_cross'], layer['Wv_cross'], layer['Wo_cross'])
-            ff_input = self._layer_norm(x + cross_attn_out, layer['ln2_gamma'], layer['ln2_beta'])
-            ff_pre = xp.dot(ff_input, layer['ff_w1']) + layer['ff_b1']
+            ff_input = self._layer_norm(x + cross_out, layer['ln2_gamma'], layer['ln2_beta'])
+
+            ff_pre  = xp.dot(ff_input, layer['ff_w1']) + layer['ff_b1']
             ff_relu = xp.maximum(0, ff_pre)
-            ff_out = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
+            ff_out  = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
             x = self._layer_norm(ff_input + ff_out, layer['ln3_gamma'], layer['ln3_beta'])
             cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
-                          'x_in': x - ff_out})  # approximate input before FF
+                          'self_ctx': self_ctx, 'cross_ctx': cross_ctx})
         return x, cache
 
     def _ff_backward(self, d_x_out, layer, cache, xp, lr):
@@ -392,8 +421,20 @@ class TransformerChatbot:
 
         # === DECODER LAYERS BACKWARD (deepest first) ===
         for layer, cache in zip(reversed(self.decoder_layers), reversed(dec_cache)):
-            # Backprop through FF sub-layer (trains ff_w1, ff_b1, ff_w2, ff_b2)
+            # FF backward — trains ff_w1, ff_b1, ff_w2, ff_b2
             d_x = self._ff_backward(d_x, layer, cache, xp, lr)
+
+            # Wo_cross backward (scaled 0.3x — approximate gradient, keep stable)
+            cross_ctx = cache['cross_ctx']
+            d_Wo_cross = xp.dot(cross_ctx.reshape(-1, self.embed_dim).T,
+                                 d_x.reshape(-1, self.embed_dim))
+            layer['Wo_cross'] -= (lr * 0.3) * xp.clip(d_Wo_cross, -5, 5)
+
+            # Wo_self backward (scaled 0.3x)
+            self_ctx = cache['self_ctx']
+            d_Wo_self = xp.dot(self_ctx.reshape(-1, self.embed_dim).T,
+                                d_x.reshape(-1, self.embed_dim))
+            layer['Wo_self'] -= (lr * 0.3) * xp.clip(d_Wo_self, -5, 5)
 
         # Gradient to target embeddings from the first decoder layer input
         for t in range(target_input.shape[1]):
@@ -402,7 +443,6 @@ class TransformerChatbot:
                 d_embed[tok] += d_x[0, t, :]
 
         # === ENCODER LAYERS BACKWARD ===
-        # Propagate a mean signal from decoder into encoder as a training signal
         enc_seq_len = input_seq.shape[1]
         d_enc = xp.broadcast_to(
             xp.mean(d_x, axis=1, keepdims=True),
@@ -411,6 +451,12 @@ class TransformerChatbot:
 
         for layer, cache in zip(reversed(self.encoder_layers), reversed(enc_cache)):
             d_enc = self._ff_backward(d_enc, layer, cache, xp, lr)
+
+            # Wo backward for encoder self-attention (scaled 0.3x)
+            attn_ctx = cache['attn_ctx']
+            d_Wo = xp.dot(attn_ctx.reshape(-1, self.embed_dim).T,
+                           d_enc.reshape(-1, self.embed_dim))
+            layer['Wo'] -= (lr * 0.3) * xp.clip(d_Wo, -5, 5)
 
         # Gradient to input embeddings
         for t in range(input_seq.shape[1]):
