@@ -167,34 +167,116 @@ def data_upload_section():
         
         if st.button("Load DailyDialog Samples"):
             with st.spinner("Loading samples..."):
-                # Providing a curated set of DailyDialog samples to keep the app responsive
-                # while giving the model enough data to learn conversation patterns.
                 samples = [
-                    {"user": "Say , Jim , how about going for a few beers after work ?", "bot": "You know I ' d love to , but I ' m actually going to the gym ."},
-                    {"user": "What for ? You ' re in good shape .", "bot": "I know , but I want to keep it that way ."},
-                    {"user": "I see . Well , maybe another time then .", "bot": "Definitely . How about tomorrow ?"},
-                    {"user": "How can I help you ?", "bot": "I ' d like to open a savings account ."},
-                    {"user": "What is the interest rate ?", "bot": "It is 3.5 % per year ."},
-                    {"user": "Is there a minimum balance ?", "bot": "Yes , you need to keep at least 100 dollars in the account ."},
-                    {"user": "Where is the nearest post office ?", "bot": "It ' s just around the corner , next to the bank ."},
-                    {"user": "Do they sell stamps there ?", "bot": "Yes , and they also have international shipping services ."},
-                    {"user": "What time do they close ?", "bot": "Usually at 5 PM on weekdays ."},
-                    {"user": "Nice to meet you .", "bot": "Nice to meet you too . Where are you from ?"},
-                    {"user": "I ' m from London . Have you ever been there ?", "bot": "No , but I ' d love to visit someday ."},
-                    {"user": "The weather is quite rainy there .", "bot": "I don ' t mind the rain . It ' s very cozy ."},
-                    {"user": "Can you recommend a good restaurant ?", "bot": "The Italian place on Main Street is excellent ."},
-                    {"user": "Is it expensive ?", "bot": "It ' s moderate . About 20 dollars per person ."},
-                    {"user": "Do I need a reservation ?", "bot": "It ' s usually busy , so a reservation is a good idea ."},
-                    {"user": "What do you do for fun ?", "bot": "I enjoy playing guitar and reading sci-fi novels ."},
-                    {"user": "Who is your favorite author ?", "bot": "I really like Isaac Asimov ."},
-                    {"user": "I prefer fantasy books like Harry Potter .", "bot": "Those are great too ! The world-building is amazing ."},
-                    {"user": "I am feeling a bit tired today .", "bot": "Maybe you should take a short nap or drink some coffee ."},
-                    {"user": "Coffee sounds good . Want to join me ?", "bot": "Sure , I ' d love a cup of coffee ."},
-                    {"user": "There ' s a nice cafe nearby .", "bot": "Great , let ' s go there now ."}
+                    # ── Greetings & farewells ─────────────────────────────
+                    {"user": "hello", "bot": "hi there! how can i help you today?"},
+                    {"user": "hi", "bot": "hello! great to hear from you."},
+                    {"user": "hey", "bot": "hey! what's up?"},
+                    {"user": "good morning", "bot": "good morning! hope you have a wonderful day."},
+                    {"user": "good afternoon", "bot": "good afternoon! how's your day going?"},
+                    {"user": "good evening", "bot": "good evening! how was your day?"},
+                    {"user": "goodbye", "bot": "goodbye! take care and have a great day."},
+                    {"user": "bye", "bot": "bye! talk to you later."},
+                    {"user": "see you later", "bot": "see you! have a good one."},
+                    {"user": "take care", "bot": "you too! take care."},
+                    {"user": "nice to meet you", "bot": "nice to meet you too!"},
+                    {"user": "it was nice talking to you", "bot": "likewise! feel free to chat anytime."},
+
+                    # ── How are you ───────────────────────────────────────
+                    {"user": "how are you", "bot": "i'm doing well, thanks for asking! how about you?"},
+                    {"user": "how are you doing", "bot": "i'm great, thanks! what about you?"},
+                    {"user": "how's it going", "bot": "pretty good! how about on your end?"},
+                    {"user": "how have you been", "bot": "i've been good, thanks! hope you have too."},
+                    {"user": "are you doing okay", "bot": "yes, doing well! how are you feeling?"},
+                    {"user": "i'm doing well thanks", "bot": "that's great to hear!"},
+                    {"user": "i'm fine thanks", "bot": "glad to hear it!"},
+                    {"user": "not too bad", "bot": "good to hear! anything exciting going on?"},
+                    {"user": "i'm a bit tired today", "bot": "sorry to hear that. maybe a short rest would help."},
+                    {"user": "i'm feeling great today", "bot": "that's wonderful! what's making you feel so good?"},
+                    {"user": "i feel a bit down", "bot": "i'm sorry to hear that. is there anything i can do to help?"},
+                    {"user": "i'm stressed out", "bot": "that's tough. taking a few deep breaths can help sometimes."},
+                    {"user": "i'm exhausted", "bot": "sounds like you need some rest. take it easy tonight."},
+                    {"user": "i'm really happy today", "bot": "that's awesome! what happened?"},
+
+                    # ── Small talk & weather ──────────────────────────────
+                    {"user": "what's the weather like today", "bot": "i don't have live data, but i hope it's nice where you are!"},
+                    {"user": "it's raining outside", "bot": "stay dry! rainy days are great for staying in and relaxing."},
+                    {"user": "it's sunny today", "bot": "enjoy the sunshine! great day to go outside."},
+                    {"user": "it's really cold today", "bot": "bundle up and stay warm!"},
+                    {"user": "it's hot outside", "bot": "stay hydrated and try to stay in the shade."},
+                    {"user": "i love this weather", "bot": "me too! perfect weather really lifts the mood."},
+                    {"user": "what day is it today", "bot": "i don't have access to real-time info, but you can check your phone!"},
+                    {"user": "i'm bored", "bot": "maybe try a new hobby or watch something you enjoy!"},
+                    {"user": "i have nothing to do", "bot": "a good book or a walk outside can be refreshing!"},
+                    {"user": "tell me something interesting", "bot": "did you know honey never spoils? archaeologists found 3000-year-old honey in egypt that was still good!"},
+                    {"user": "say something funny", "bot": "why don't scientists trust atoms? because they make up everything!"},
+                    {"user": "can you tell me a joke", "bot": "sure! why did the computer go to school? to improve its bytes!"},
+
+                    # ── Food & drinks ─────────────────────────────────────
+                    {"user": "i'm hungry", "bot": "maybe grab a snack or cook something you enjoy!"},
+                    {"user": "what should i eat for dinner", "bot": "how about pasta or a nice stir fry? simple and delicious."},
+                    {"user": "do you like coffee", "bot": "i think coffee is great for those early mornings!"},
+                    {"user": "i love coffee", "bot": "nothing beats a good cup of coffee to start the day!"},
+                    {"user": "do you like food", "bot": "i think trying new foods is a great way to experience different cultures!"},
+                    {"user": "what's your favorite food", "bot": "i think anything homemade is the best!"},
+                    {"user": "i just had a great meal", "bot": "that sounds wonderful! good food always makes the day better."},
+                    {"user": "i can't decide what to eat", "bot": "when in doubt, something simple like soup or a sandwich is always a solid choice."},
+
+                    # ── Hobbies & interests ───────────────────────────────
+                    {"user": "what do you do for fun", "bot": "i enjoy learning new things and having great conversations!"},
+                    {"user": "do you like music", "bot": "i think music is wonderful — it can really change your mood."},
+                    {"user": "i love reading", "bot": "reading is great! it's one of the best ways to learn and relax."},
+                    {"user": "i like watching movies", "bot": "movies are a great way to unwind! what kind do you enjoy?"},
+                    {"user": "i enjoy hiking", "bot": "that sounds amazing! being out in nature is so refreshing."},
+                    {"user": "i play video games", "bot": "that's fun! gaming is a great way to relax and challenge yourself."},
+                    {"user": "i like cooking", "bot": "cooking is such a rewarding skill! do you have a favorite dish you like to make?"},
+                    {"user": "i enjoy drawing", "bot": "art is a wonderful way to express yourself!"},
+                    {"user": "i've been working out", "bot": "nice work! staying active is really important for feeling good."},
+                    {"user": "i went for a run today", "bot": "great job! exercise is one of the best mood boosters."},
+                    {"user": "i'm learning a new skill", "bot": "that's exciting! learning new things keeps the mind sharp."},
+
+                    # ── Work & study ──────────────────────────────────────
+                    {"user": "i have a lot of work today", "bot": "hang in there! take it one task at a time."},
+                    {"user": "work was tough today", "bot": "sorry to hear that. make sure to rest and recharge tonight."},
+                    {"user": "i finished all my work", "bot": "great job! you deserve a break after that."},
+                    {"user": "i'm studying for an exam", "bot": "good luck! regular breaks while studying really help with memory."},
+                    {"user": "i passed my exam", "bot": "congratulations! all that hard work paid off."},
+                    {"user": "i have a meeting later", "bot": "good luck! i'm sure you'll do great."},
+                    {"user": "work is going well", "bot": "that's great to hear! keep up the good work."},
+
+                    # ── Advice & general questions ────────────────────────
+                    {"user": "can you help me", "bot": "of course! what do you need help with?"},
+                    {"user": "i need some advice", "bot": "sure, i'm happy to help. what's on your mind?"},
+                    {"user": "what do you think i should do", "bot": "it depends on the situation. tell me more and i'll try to help."},
+                    {"user": "i don't know what to do", "bot": "that's okay. sometimes it helps to take a step back and think it through."},
+                    {"user": "thank you", "bot": "you're welcome! happy to help anytime."},
+                    {"user": "thanks", "bot": "no problem at all!"},
+                    {"user": "thanks a lot", "bot": "glad i could help!"},
+                    {"user": "you're very helpful", "bot": "thank you! that means a lot."},
+                    {"user": "i appreciate your help", "bot": "anytime! feel free to ask if you need anything else."},
+                    {"user": "that was helpful", "bot": "glad to hear it! let me know if there's anything else."},
+                    {"user": "i'm not sure about that", "bot": "that's totally fine. take your time to figure it out."},
+                    {"user": "i agree with you", "bot": "great! it's always nice when we see things the same way."},
+                    {"user": "i disagree", "bot": "that's perfectly fine! different perspectives are always interesting."},
+                    {"user": "can you explain that", "bot": "of course! let me try to make it clearer."},
+                    {"user": "i understand now", "bot": "glad that helped! let me know if you have more questions."},
+                    {"user": "what do you think", "bot": "i think it really depends on the context. what's your view?"},
+                    {"user": "do you have any suggestions", "bot": "sure! tell me more about what you're working on and i'll try to help."},
+
+                    # ── Feelings & support ────────────────────────────────
+                    {"user": "i'm excited", "bot": "that's great! what are you excited about?"},
+                    {"user": "i'm nervous", "bot": "take a deep breath. you've got this!"},
+                    {"user": "i'm scared", "bot": "it's okay to feel that way. what's worrying you?"},
+                    {"user": "i'm confused", "bot": "let's work through it together. what's got you confused?"},
+                    {"user": "i feel lonely", "bot": "i'm sorry to hear that. remember you're not alone, and talking always helps."},
+                    {"user": "i had a bad day", "bot": "i'm sorry to hear that. tomorrow is a fresh start!"},
+                    {"user": "i had a great day", "bot": "that's wonderful! glad things went well for you."},
+                    {"user": "everything is going well", "bot": "that's amazing! enjoy it."},
+                    {"user": "things are a bit tough right now", "bot": "hang in there. tough times don't last forever."},
                 ]
-                # Multiply samples to simulate a larger dataset for scratch training
-                st.session_state.training_data = samples * 25
-                st.success(f"Loaded {len(st.session_state.training_data)} conversation samples from DailyDialog! You can now go to Model Setup.")
+                # Multiply to give the model enough repetitions to learn from
+                st.session_state.training_data = samples * 12
+                st.success(f"Loaded {len(st.session_state.training_data):,} conversation samples ({len(samples)} unique pairs × 12). Head to Model Setup to train!")
 
     elif upload_type == "Upload File":
         uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl', 'parquet'])
