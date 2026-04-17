@@ -1033,24 +1033,24 @@ def export_model_section():
     # ── 2. .gguf export ───────────────────────────────────────────────────────
     with col2:
         st.subheader("🦙 .gguf Format")
-        st.caption("Standard GGUF binary — compatible with llama.cpp tooling.")
-
-        st.warning(
-            "⚠️ **Ollama limitation:** Ollama can only run models with architectures it "
-            "knows (LLaMA, Mistral, Gemma, etc.). A VnexAI RNN/Transformer isn't one of "
-            "them, so Ollama will refuse to load it. The GGUF file is still useful for "
-            "archiving or your own C++ inference code.",
-            icon="⚠️"
-        )
+        if is_rnn:
+            st.caption("GGUF binary for archiving/llama.cpp tooling (RNN archive format).")
+        else:
+            st.caption("Ollama-compatible GGUF — exported as `llama` architecture with embedded vocabulary.")
+            st.info("✅ This GGUF can be loaded directly by Ollama using the Modelfile below.", icon="✅")
 
         if st.button("Prepare Model (.gguf)", key="export_gguf_btn"):
             try:
                 from gguf_writer import export_rnn_to_gguf, export_transformer_to_gguf
+                tokenizer = st.session_state.get('tokenizer')
                 with st.spinner("Building GGUF file…"):
                     if is_rnn:
                         gguf_bytes = export_rnn_to_gguf(model, model_name)
                     else:
-                        gguf_bytes = export_transformer_to_gguf(model, model_name)
+                        if tokenizer is None:
+                            st.error("Tokenizer not found in session. Please train a model first.")
+                            return
+                        gguf_bytes = export_transformer_to_gguf(model, tokenizer, model_name)
                 st.session_state.gguf_bytes = gguf_bytes
                 size_mb = len(gguf_bytes) / (1024 * 1024)
                 st.success(f"Ready! ({size_mb:.1f} MB)")

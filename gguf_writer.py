@@ -4,13 +4,10 @@ GGUF (GPT-Generated Unified Format) writer for VnexAI models.
 GGUF is the file format used by llama.cpp and Ollama.
 Spec: https://github.com/ggerganov/ggml/blob/master/docs/gguf.md
 
-NOTE: Ollama can only RUN models with architectures it understands (llama, mistral,
-gemma, etc.). A VnexAI RNN or custom Transformer written here will be stored in
-valid GGUF binary format, but Ollama will refuse to load it because the architecture
-key won't match a built-in backend. The GGUF file is still useful for:
-  - Archiving model weights in a standardised binary format
-  - Loading with custom llama.cpp forks or your own C++ inference code
-  - Inspecting with tools like `gguf-dump` from the llama.cpp repo
+VnexAI Transformer models are exported using the "llama" architecture so that
+Ollama (and llama.cpp) can load and run them directly.  The decoder layers are
+mapped to llama block format; the encoder is omitted since Ollama only supports
+decoder-only inference.
 """
 
 import struct
@@ -97,6 +94,8 @@ def _write_kv_value(buf: io.BytesIO, vtype: int, value):
         _write_str(buf, value)
     elif vtype == GGUF_TYPE_UINT32:
         buf.write(struct.pack("<I", value))
+    elif vtype == GGUF_TYPE_INT32:
+        buf.write(struct.pack("<i", value))
     elif vtype == GGUF_TYPE_FLOAT32:
         buf.write(struct.pack("<f", value))
     else:
@@ -107,22 +106,19 @@ def _align_up(x: int, alignment: int) -> int:
     return (x + alignment - 1) & ~(alignment - 1)
 
 
-# ── Main export function ─────────────────────────────────────────────────────
+def _to_f32_np(arr) -> np.ndarray:
+    """Convert a CuPy or NumPy array to a CPU float32 NumPy array."""
+    if hasattr(arr, "get"):          # CuPy → NumPy
+        arr = arr.get()
+    return np.asarray(arr, dtype=np.float32)
+
+
+# ── Main export functions ─────────────────────────────────────────────────────
 
 def export_rnn_to_gguf(model, model_name: str) -> bytes:
     """
     Serialise a VnexAI RNN model (VnexAIChatbot) to GGUF bytes.
-
-    Tensors stored:
-        token_embd.weight       [vocab_size, embedding_dim]
-        enc.Wxh                 [embedding_dim, hidden_dim]
-        enc.Whh                 [hidden_dim, hidden_dim]
-        enc.bh                  [hidden_dim]
-        dec.Wxh                 [embedding_dim, hidden_dim]
-        dec.Whh                 [hidden_dim, hidden_dim]
-        dec.bh                  [hidden_dim]
-        output.weight           [hidden_dim, vocab_size]
-        output.bias             [vocab_size]
+    Uses custom 'vnexai-rnn' architecture (inspection/archive use).
     """
     arch = "vnexai-rnn"
     tensors = _collect_rnn_tensors(model)
@@ -130,26 +126,33 @@ def export_rnn_to_gguf(model, model_name: str) -> bytes:
     return _build_gguf(arch, metadata, tensors)
 
 
-def export_transformer_to_gguf(model, model_name: str) -> bytes:
+def export_transformer_to_gguf(model, tokenizer, model_name: str) -> bytes:
     """
-    Serialise a VnexAI Transformer model (TransformerChatbot) to GGUF bytes.
+    Serialise a VnexAI Transformer model to GGUF using the 'llama' architecture
+    so that Ollama and llama.cpp can load and run it directly.
 
-    Collects all weight matrices from encoder/decoder layers plus embeddings.
+    Mapping strategy
+    ----------------
+    - Decoder layers → blk.{i}.* (llama block format)
+    - Encoder layers are omitted (Ollama is decoder-only)
+    - Attention weights are transposed to match llama.cpp's matmul convention
+    - FFN gate = FFN up = W1.T  (we have ReLU, llama has SiLU+gate;
+      setting gate = up is the closest approximation)
+    - FFN down = W2.T
+    - Layer-norm gamma → attn_norm / ffn_norm
+    - Full vocabulary embedded in tokenizer section
     """
-    arch = "vnexai-transformer"
-    tensors = _collect_transformer_tensors(model)
-    metadata = _transformer_metadata(model, arch, model_name)
+    arch = "llama"
+    tensors = _collect_transformer_tensors_llama(model)
+    metadata = _transformer_metadata_llama(model, tokenizer, model_name)
     return _build_gguf(arch, metadata, tensors)
 
 
-# ── Tensor collectors ────────────────────────────────────────────────────────
+# keep old name as alias for any existing callers
+export_transformer_to_gguf_ollama = export_transformer_to_gguf
 
-def _to_f32_np(arr) -> np.ndarray:
-    """Convert a CuPy or NumPy array to a CPU float32 NumPy array."""
-    if hasattr(arr, "get"):          # CuPy → NumPy
-        arr = arr.get()
-    return np.asarray(arr, dtype=np.float32)
 
+# ── Tensor collectors ─────────────────────────────────────────────────────────
 
 def _collect_rnn_tensors(model) -> list:
     """Return list of (name, numpy_f32_array) tuples."""
@@ -166,61 +169,66 @@ def _collect_rnn_tensors(model) -> list:
     ]
 
 
-def _collect_transformer_tensors(model) -> list:
-    """Collect all Transformer weight matrices."""
-    tensors = [
-        ("token_embd.weight", _to_f32_np(model.embedding)),
-    ]
+def _collect_transformer_tensors_llama(model) -> list:
+    """
+    Collect decoder layer weights mapped to llama tensor naming.
 
-    for i, layer in enumerate(model.encoder_layers):
-        prefix = f"enc.layer.{i}"
-        for attr_name, tensor_name in [
-            ("Wq", f"{prefix}.attn.Wq"),
-            ("Wk", f"{prefix}.attn.Wk"),
-            ("Wv", f"{prefix}.attn.Wv"),
-            ("Wo", f"{prefix}.attn.Wo"),
-            ("W1", f"{prefix}.ff.W1"),
-            ("b1", f"{prefix}.ff.b1"),
-            ("W2", f"{prefix}.ff.W2"),
-            ("b2", f"{prefix}.ff.b2"),
-            ("gamma1", f"{prefix}.ln1.gamma"),
-            ("beta1",  f"{prefix}.ln1.beta"),
-            ("gamma2", f"{prefix}.ln2.gamma"),
-            ("beta2",  f"{prefix}.ln2.beta"),
-        ]:
-            if hasattr(layer, attr_name):
-                arr = _to_f32_np(getattr(layer, attr_name)).flatten()
-                tensors.append((tensor_name, arr))
+    llama.cpp matmul convention: ggml_mul_mat(W, x) computes W @ x where
+    W has shape [out, in].  Our forward pass does x @ W where W is [in, out].
+    Therefore we transpose each weight matrix before storing.
+    """
+    tensors = []
 
+    # Token embeddings: [vocab_size, embed_dim] — same in both conventions
+    tensors.append(("token_embd.weight", _to_f32_np(model.embedding)))
+
+    num_dec = len(model.decoder_layers)
     for i, layer in enumerate(model.decoder_layers):
-        prefix = f"dec.layer.{i}"
-        for attr_name, tensor_name in [
-            ("Wq", f"{prefix}.self_attn.Wq"),
-            ("Wk", f"{prefix}.self_attn.Wk"),
-            ("Wv", f"{prefix}.self_attn.Wv"),
-            ("Wo", f"{prefix}.self_attn.Wo"),
-            ("cross_Wq", f"{prefix}.cross_attn.Wq"),
-            ("cross_Wk", f"{prefix}.cross_attn.Wk"),
-            ("cross_Wv", f"{prefix}.cross_attn.Wv"),
-            ("cross_Wo", f"{prefix}.cross_attn.Wo"),
-            ("W1", f"{prefix}.ff.W1"),
-            ("b1", f"{prefix}.ff.b1"),
-            ("W2", f"{prefix}.ff.W2"),
-            ("b2", f"{prefix}.ff.b2"),
-        ]:
-            if hasattr(layer, attr_name):
-                arr = _to_f32_np(getattr(layer, attr_name)).flatten()
-                tensors.append((tensor_name, arr))
+        # Self-attention weights (transpose: [in, out] → [out, in])
+        tensors.append((f"blk.{i}.attn_q.weight",
+                        _to_f32_np(layer['Wq_self']).T))
+        tensors.append((f"blk.{i}.attn_k.weight",
+                        _to_f32_np(layer['Wk_self']).T))
+        tensors.append((f"blk.{i}.attn_v.weight",
+                        _to_f32_np(layer['Wv_self']).T))
+        tensors.append((f"blk.{i}.attn_output.weight",
+                        _to_f32_np(layer['Wo_self']).T))
 
-    tensors.append(("output.weight", _to_f32_np(model.output_proj).flatten()
-                    if hasattr(model, 'output_proj') else np.zeros(1, dtype=np.float32)))
-    tensors.append(("output.bias",   _to_f32_np(model.output_bias).flatten()
-                    if hasattr(model, 'output_bias') else np.zeros(1, dtype=np.float32)))
+        # Feed-forward weights
+        # Our ff_w1: [embed_dim, ff_dim].  llama ffn_up/ffn_gate: [ff_dim, embed_dim]
+        w1_T = _to_f32_np(layer['ff_w1']).T    # [ff_dim, embed_dim]
+        w2_T = _to_f32_np(layer['ff_w2']).T    # [embed_dim, ff_dim]
+        tensors.append((f"blk.{i}.ffn_gate.weight", w1_T))
+        tensors.append((f"blk.{i}.ffn_up.weight",   w1_T))
+        tensors.append((f"blk.{i}.ffn_down.weight",  w2_T))
+
+        # FFN biases — stored as 1-D vectors
+        tensors.append((f"blk.{i}.ffn_up.bias",
+                        _to_f32_np(layer['ff_b1']).flatten()))
+        tensors.append((f"blk.{i}.ffn_down.bias",
+                        _to_f32_np(layer['ff_b2']).flatten()))
+
+        # Layer-norm weights (gamma → llama norm weight)
+        tensors.append((f"blk.{i}.attn_norm.weight",
+                        _to_f32_np(layer['ln1_gamma']).flatten()))
+        tensors.append((f"blk.{i}.ffn_norm.weight",
+                        _to_f32_np(layer['ln2_gamma']).flatten()))
+
+    # Final output projection: our [embed_dim, vocab_size] → llama [vocab_size, embed_dim]
+    tensors.append(("output.weight",
+                    _to_f32_np(model.output_weights).T))
+
+    # Final norm — use last decoder block's ln2 gamma, or ones if none
+    if num_dec > 0:
+        final_norm = _to_f32_np(model.decoder_layers[-1]['ln2_gamma']).flatten()
+    else:
+        final_norm = np.ones(model.embed_dim, dtype=np.float32)
+    tensors.append(("output_norm.weight", final_norm))
 
     return tensors
 
 
-# ── Metadata builders ────────────────────────────────────────────────────────
+# ── Metadata builders ─────────────────────────────────────────────────────────
 
 def _rnn_metadata(model, arch: str, model_name: str) -> list:
     """Return list of (key, vtype, value) triples for RNN model metadata."""
@@ -232,7 +240,6 @@ def _rnn_metadata(model, arch: str, model_name: str) -> list:
         (f"{arch}.embedding_dim",       GGUF_TYPE_UINT32,  int(model.embedding_dim)),
         (f"{arch}.hidden_dim",          GGUF_TYPE_UINT32,  int(model.hidden_dim)),
         (f"{arch}.max_length",          GGUF_TYPE_UINT32,  int(model.max_length)),
-        (f"{arch}.learning_rate",       GGUF_TYPE_FLOAT32, float(model.learning_rate)),
         ("tokenizer.ggml.model",        GGUF_TYPE_STRING,  "vnexai"),
         ("tokenizer.ggml.bos_token_id", GGUF_TYPE_UINT32,  1),  # <START>
         ("tokenizer.ggml.eos_token_id", GGUF_TYPE_UINT32,  2),  # <END>
@@ -241,24 +248,67 @@ def _rnn_metadata(model, arch: str, model_name: str) -> list:
     ]
 
 
-def _transformer_metadata(model, arch: str, model_name: str) -> list:
-    return [
-        ("general.architecture",        GGUF_TYPE_STRING,  arch),
-        ("general.name",                GGUF_TYPE_STRING,  model_name),
-        ("general.file_type",           GGUF_TYPE_UINT32,  0),
-        (f"{arch}.vocab_size",          GGUF_TYPE_UINT32,  int(model.vocab_size)),
-        (f"{arch}.embedding_dim",       GGUF_TYPE_UINT32,  int(model.embed_dim)),
-        (f"{arch}.num_heads",           GGUF_TYPE_UINT32,  int(model.num_heads)),
-        (f"{arch}.num_layers",          GGUF_TYPE_UINT32,  int(model.num_layers)),
-        (f"{arch}.ff_dim",              GGUF_TYPE_UINT32,  int(model.ff_dim)),
-        (f"{arch}.max_seq_len",         GGUF_TYPE_UINT32,  int(model.max_seq_len)),
-        (f"{arch}.learning_rate",       GGUF_TYPE_FLOAT32, float(model.learning_rate)),
-        ("tokenizer.ggml.model",        GGUF_TYPE_STRING,  "vnexai"),
-        ("tokenizer.ggml.bos_token_id", GGUF_TYPE_UINT32,  1),
-        ("tokenizer.ggml.eos_token_id", GGUF_TYPE_UINT32,  2),
-        ("tokenizer.ggml.padding_token_id", GGUF_TYPE_UINT32, 0),
-        ("tokenizer.ggml.unknown_token_id", GGUF_TYPE_UINT32, 3),
+def _transformer_metadata_llama(model, tokenizer, model_name: str) -> list:
+    """
+    Build the full llama-compatible metadata block, including the embedded
+    vocabulary so that Ollama can tokenise user input without an external file.
+    """
+    num_layers = len(model.decoder_layers)
+    head_dim   = model.embed_dim // model.num_heads
+
+    # ── Build vocabulary list in index order ──────────────────────────────
+    # tokenizer.idx2word is {int: str}; pad any missing indices with <UNK>
+    vocab_size = tokenizer.vocab_size
+    vocab_list = []
+    for idx in range(vocab_size):
+        token = tokenizer.idx2word.get(idx, "<UNK>")
+        vocab_list.append(token)
+
+    # Token scores — llama expects one float per token (0.0 is fine for us)
+    token_scores = [0.0] * vocab_size
+
+    # Token types — 1 = normal, 3 = BOS, 4 = EOS, 6 = PAD
+    token_types = [1] * vocab_size
+    token_types[0] = 6   # <PAD>
+    token_types[1] = 3   # <START> / BOS
+    token_types[2] = 4   # <END>  / EOS
+    token_types[3] = 1   # <UNK>
+
+    metadata = [
+        # ── general ──────────────────────────────────────────────────────
+        ("general.architecture",              GGUF_TYPE_STRING,  "llama"),
+        ("general.name",                      GGUF_TYPE_STRING,  model_name),
+        ("general.file_type",                 GGUF_TYPE_UINT32,  0),   # F32
+
+        # ── llama architecture params ────────────────────────────────────
+        ("llama.context_length",              GGUF_TYPE_UINT32,  int(model.max_seq_len)),
+        ("llama.embedding_length",            GGUF_TYPE_UINT32,  int(model.embed_dim)),
+        ("llama.block_count",                 GGUF_TYPE_UINT32,  int(num_layers)),
+        ("llama.feed_forward_length",         GGUF_TYPE_UINT32,  int(model.ff_dim)),
+        ("llama.rope.dimension_count",        GGUF_TYPE_UINT32,  int(head_dim)),
+        ("llama.attention.head_count",        GGUF_TYPE_UINT32,  int(model.num_heads)),
+        ("llama.attention.head_count_kv",     GGUF_TYPE_UINT32,  int(model.num_heads)),
+        ("llama.attention.layer_norm_rms_epsilon", GGUF_TYPE_FLOAT32, 1e-5),
+        ("llama.vocab_size",                  GGUF_TYPE_UINT32,  int(vocab_size)),
+
+        # ── tokenizer ─────────────────────────────────────────────────────
+        # Use "gpt2" model so llama.cpp treats tokens as plain string IDs
+        ("tokenizer.ggml.model",              GGUF_TYPE_STRING,  "gpt2"),
+        ("tokenizer.ggml.tokens",             GGUF_TYPE_ARRAY,
+            (GGUF_TYPE_STRING, vocab_list)),
+        ("tokenizer.ggml.token_type",         GGUF_TYPE_ARRAY,
+            (GGUF_TYPE_INT32, token_types)),
+        ("tokenizer.ggml.scores",             GGUF_TYPE_ARRAY,
+            (GGUF_TYPE_FLOAT32, token_scores)),
+        ("tokenizer.ggml.bos_token_id",       GGUF_TYPE_UINT32,  1),
+        ("tokenizer.ggml.eos_token_id",       GGUF_TYPE_UINT32,  2),
+        ("tokenizer.ggml.padding_token_id",   GGUF_TYPE_UINT32,  0),
+        ("tokenizer.ggml.unknown_token_id",   GGUF_TYPE_UINT32,  3),
+        ("tokenizer.ggml.add_bos_token",      GGUF_TYPE_BOOL,    True),
+        ("tokenizer.ggml.add_eos_token",      GGUF_TYPE_BOOL,    False),
     ]
+
+    return metadata
 
 
 # ── GGUF binary builder ──────────────────────────────────────────────────────
