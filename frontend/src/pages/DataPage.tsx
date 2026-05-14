@@ -144,7 +144,7 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
               transition: 'all 0.15s',
             }}
           >
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📂</div>
+            <div style={{ fontSize: 32, marginBottom: 10, color: '#475569' }}>↑</div>
             <div style={{ color: '#e2e8f0', fontWeight: 500, marginBottom: 6 }}>
               Drop a file here or click to browse
             </div>

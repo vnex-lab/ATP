@@ -56,7 +56,6 @@ export default function ChatPage({ status, onRefresh }: { status: AppStatus; onR
       <PageShell title="Chat" subtitle="Test your trained model in a conversation.">
         <Card>
           <div style={{ textAlign: 'center', padding: '40px 20px', color: '#475569' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🤖</div>
             <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>Model not trained yet</div>
             <div style={{ fontSize: 13 }}>Complete the Training step first to start chatting.</div>
           </div>
@@ -112,7 +111,6 @@ export default function ChatPage({ status, onRefresh }: { status: AppStatus; onR
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {msgs.length === 0 && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#374151' }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>💬</div>
               <div style={{ fontSize: 14 }}>Send a message to start chatting</div>
             </div>
           )}
@@ -131,8 +129,8 @@ export default function ChatPage({ status, onRefresh }: { status: AppStatus; onR
                   width: 28, height: 28, borderRadius: 8,
                   background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, flexShrink: 0,
-                }}>🤖</div>
+                  fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0,
+                }}>AI</div>
               )}
               <div style={{
                 maxWidth: '70%',
@@ -153,14 +151,14 @@ export default function ChatPage({ status, onRefresh }: { status: AppStatus; onR
                   width: 28, height: 28, borderRadius: 8,
                   background: '#1e3a5f', border: '1px solid #2563eb44',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, flexShrink: 0,
-                }}>👤</div>
+                  fontSize: 10, fontWeight: 700, color: '#93c5fd', flexShrink: 0,
+                }}>U</div>
               )}
             </div>
           ))}
           {loading && (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg, #3b82f6, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>🤖</div>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg, #3b82f6, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#fff' }}>AI</div>
               <div style={{ background: '#1c1c1c', border: '1px solid #252525', borderRadius: '14px 14px 14px 4px', padding: '10px 16px' }}>
                 <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                   {[0, 0.2, 0.4].map((delay) => (

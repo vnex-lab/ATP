@@ -99,7 +99,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
 
   const isTransformer = modelType !== 'rnn'
   const headError = isTransformer && embDim % numHeads !== 0
-    ? `⚠ ${embDim} is not divisible by ${numHeads} heads` : null
+    ? `${embDim} is not divisible by ${numHeads} heads` : null
 
   const approxParams = isTransformer
     ? (() => {
@@ -175,9 +175,9 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
         {/* Architecture selector */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 16px' }}>
           {([
-            ['transformer_decoder', '⚡ Transformer Decoder-Only', 'Best choice. Ollama-ready GGUF export. Like GPT.'],
-            ['transformer_enc_dec', '🔁 Transformer Encoder-Decoder', 'Legacy. Standard seq2seq Transformer.'],
-            ['rnn', '🔴 RNN (Legacy)', 'Simple recurrent network. Less capable.'],
+            ['transformer_decoder', 'Transformer Decoder-Only', 'Best choice. Ollama-ready GGUF export. Like GPT.'],
+            ['transformer_enc_dec', 'Transformer Encoder-Decoder', 'Legacy. Standard seq2seq Transformer.'],
+            ['rnn', 'RNN (Legacy)', 'Simple recurrent network. Less capable.'],
           ] as const).map(([id, label, desc]) => (
             <label
               key={id}
@@ -327,10 +327,10 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
           <StatChip label="Est. VRAM" value={`~${vramMb.toFixed(0)} MB`} />
         </div>
         {approxParams > 1e9 && (
-          <div style={{ marginTop: 8, color: '#f87171', fontSize: 12 }}>🔥 {(approxParams / 1e9).toFixed(1)}B params — needs high-end GPU</div>
+          <div style={{ marginTop: 8, color: '#f87171', fontSize: 12 }}>{(approxParams / 1e9).toFixed(1)}B params — needs high-end GPU</div>
         )}
         {approxParams > 1e8 && approxParams <= 1e9 && (
-          <div style={{ marginTop: 8, color: '#f59e0b', fontSize: 12 }}>⚠ {(approxParams / 1e6).toFixed(0)}M params — large model, ensure enough VRAM</div>
+          <div style={{ marginTop: 8, color: '#f59e0b', fontSize: 12 }}>{(approxParams / 1e6).toFixed(0)}M params — large model, ensure enough VRAM</div>
         )}
 
         <div style={{ marginTop: 16 }}>
@@ -348,7 +348,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
             <div style={{ color: '#86efac', fontWeight: 600, marginBottom: 8 }}>Model Created</div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <StatChip label="Parameters" value={`${modelResult.total_params.toLocaleString()} (${modelResult.total_params_m}M)`} />
-              <StatChip label="Compute" value={modelResult.gpu_available ? '🚀 GPU (CuPy)' : '💻 CPU (NumPy)'} />
+              <StatChip label="Compute" value={modelResult.gpu_available ? 'GPU (CuPy)' : 'CPU (NumPy)'} />
               <StatChip label="Type" value={modelResult.model_type} />
               <StatChip label="Vocab" value={modelResult.vocab_size.toLocaleString()} />
             </div>

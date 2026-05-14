@@ -133,7 +133,7 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               {td.gpu_available && (
-                <StatChip label="Mode" value="🚀 GPU" />
+                <StatChip label="Mode" value="GPU" />
               )}
               {td.current_epoch > 0 && (
                 <StatChip label="Loss" value={td.avg_loss.toFixed(4)} />
@@ -224,7 +224,7 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
           </div>
           {status.training_data_count < 500 && (
             <div style={{ marginTop: 10, color: '#f59e0b', fontSize: 12 }}>
-              ⚠ Small dataset ({status.training_data_count} pairs). Aim for 1,000+ for better results.
+              Small dataset ({status.training_data_count} pairs). Aim for 1,000+ for better results.
             </div>
           )}
         </Card>

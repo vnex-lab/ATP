@@ -72,7 +72,7 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
       <PageShell title="Export" subtitle="Download your trained model.">
         <Card>
           <div style={{ textAlign: 'center', padding: '40px 20px', color: '#475569' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>💾</div>
+            <div style={{ fontSize: 40, marginBottom: 12, color: '#374151' }}>—</div>
             <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>No model to export</div>
             <div style={{ fontSize: 13 }}>Create and train a model first.</div>
           </div>
@@ -130,7 +130,7 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
         {/* .bin Model */}
         <ExportCard
           title=".bin Format"
-          icon="📦"
+          icon=".bin"
           description="VnexAI native pickle format. Load with the VnexAI Python API."
           badge="Native"
           badgeColor="#3b82f6"
@@ -145,7 +145,7 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
         {/* .gguf */}
         <ExportCard
           title=".gguf Format"
-          icon="🦙"
+          icon=".gguf"
           description={
             !isRnn
               ? decoderOnly
@@ -168,7 +168,7 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
         {/* Tokenizer */}
         <ExportCard
           title="Tokenizer (.bin)"
-          icon="📝"
+          icon="tok"
           description="Vocabulary mapping file. Required to decode model outputs."
           badge="Required for inference"
           badgeColor="#6366f1"
@@ -184,7 +184,7 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
       {/* Ollama section */}
       {!isRnn && decoderOnly && (
         <Card>
-          <div style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0', marginBottom: 6 }}>🦙 Publish to Ollama Registry</div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0', marginBottom: 6 }}>Publish to Ollama Registry</div>
           <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 16 }}>
             Generate a Modelfile and push your model to ollama.com so anyone can <code style={{ color: '#93c5fd', background: '#1e3a5f', padding: '1px 5px', borderRadius: 4 }}>ollama run</code> it.
           </p>
@@ -230,10 +230,10 @@ export default function ExportPage({ status, onRefresh }: { status: AppStatus; o
                   a.click()
                 }}
                 style={{ marginTop: 10, ...btnStyle('#1c1c1c', '#94a3b8') }}
-              >📥 Download Modelfile</button>
+              >Download Modelfile</button>
 
               <div style={{ marginTop: 20 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0', marginBottom: 12 }}>🚀 Push to Ollama Registry</div>
+                <div style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0', marginBottom: 12 }}>Push to Ollama Registry</div>
                 {[
                   ['1. Install Ollama', 'curl -fsSL https://ollama.com/install.sh | sh'],
                   ['2. Create model locally', `ollama create ${ollamaUser}/${modelName} -f Modelfile`],
@@ -276,7 +276,7 @@ function ExportCard({
       display: 'flex', flexDirection: 'column', gap: 10, opacity: disabled ? 0.6 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 20 }}>{icon}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: '#64748b', background: '#1c1c1c', border: '1px solid #252525', borderRadius: 4, padding: '2px 5px' }}>{icon}</span>
         <span style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0' }}>{title}</span>
       </div>
       <span style={{ fontSize: 11, color: badgeColor, background: badgeColor + '22', padding: '2px 8px', borderRadius: 20, alignSelf: 'flex-start' }}>
@@ -299,7 +299,7 @@ function ExportCard({
         </button>
         {ready && (
           <button onClick={onDownload} style={btnStyle('#2563eb', '#fff')}>
-            📥 Download
+            Download
           </button>
         )}
       </div>

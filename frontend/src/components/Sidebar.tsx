@@ -84,11 +84,14 @@ export default function Sidebar({ page, setPage, status }: Props) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 16,
+              fontSize: 12,
+              fontWeight: 700,
+              color: '#fff',
+              letterSpacing: '-0.5px',
               flexShrink: 0,
             }}
           >
-            🤖
+            LV
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, color: '#e2e8f0', letterSpacing: '-0.3px' }}>
