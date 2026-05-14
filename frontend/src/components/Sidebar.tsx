@@ -92,7 +92,7 @@ export default function Sidebar({ page, setPage, status }: Props) {
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, color: '#e2e8f0', letterSpacing: '-0.3px' }}>
-              VnexAI
+              LLM Vite
             </div>
             <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
               Train your own AI
@@ -212,7 +212,7 @@ export default function Sidebar({ page, setPage, status }: Props) {
           </div>
         )}
         <div style={{ marginTop: 10, fontSize: 10, color: '#374151' }}>
-          VnexAI · NumPy/CuPy
+          LLM Vite · NumPy/CuPy
         </div>
       </div>
     </aside>
