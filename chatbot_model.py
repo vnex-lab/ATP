@@ -28,7 +28,7 @@ try:
         DEVICE = "CPU"
 except ImportError:
     # CuPy not installed
-    print("ℹ️ CuPy not installed - using CPU mode (install cupy-cuda12x for GPU support)")
+    print("CuPy not installed - using CPU mode (install cupy-cuda12x for GPU support)")
     import numpy as np
     GPU_AVAILABLE = False
     DEVICE = "CPU"

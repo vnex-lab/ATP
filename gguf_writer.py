@@ -142,6 +142,7 @@ def export_transformer_to_gguf(model, tokenizer, model_name: str) -> bytes:
     - Layer-norm gamma → attn_norm / ffn_norm
     - Full vocabulary embedded in tokenizer section
     """
+    _validate_transformer_for_llama_export(model, tokenizer)
     arch = "llama"
     tensors = _collect_transformer_tensors_llama(model)
     metadata = _transformer_metadata_llama(model, tokenizer, model_name)
@@ -150,6 +151,45 @@ def export_transformer_to_gguf(model, tokenizer, model_name: str) -> bytes:
 
 # keep old name as alias for any existing callers
 export_transformer_to_gguf_ollama = export_transformer_to_gguf
+
+
+def _validate_transformer_for_llama_export(model, tokenizer):
+    """
+    Strict preflight checks so we fail early with a clear message instead of
+    emitting a malformed GGUF that crashes the Ollama runner at generation time.
+    """
+    if not getattr(model, "decoder_only", False):
+        raise ValueError(
+            "Ollama export requires a Decoder-Only Transformer model. "
+            "Create/train with 'Transformer Decoder-Only (Ollama Recommended)'."
+        )
+
+    if int(model.embed_dim) % int(model.num_heads) != 0:
+        raise ValueError("embed_dim must be divisible by num_heads for llama export.")
+
+    if not hasattr(tokenizer, "vocab_size") or int(tokenizer.vocab_size) <= 4:
+        raise ValueError("Tokenizer vocabulary is too small. Build vocabulary before export.")
+
+    required = (
+        "Wq_self", "Wk_self", "Wv_self", "Wo_self",
+        "ff_w1", "ff_w2", "ln1_gamma", "ln2_gamma"
+    )
+
+    for i, layer in enumerate(model.decoder_layers):
+        for key in required:
+            if key not in layer:
+                raise ValueError(f"Decoder layer {i} missing required weight: {key}")
+            arr = _to_f32_np(layer[key])
+            if not np.isfinite(arr).all():
+                raise ValueError(f"Decoder layer {i} has NaN/Inf in {key}; aborting export.")
+
+    for name, arr in (
+        ("embedding", model.embedding),
+        ("output_weights", model.output_weights),
+    ):
+        np_arr = _to_f32_np(arr)
+        if not np.isfinite(np_arr).all():
+            raise ValueError(f"Model has NaN/Inf in {name}; aborting export.")
 
 
 # ── Tensor collectors ─────────────────────────────────────────────────────────
@@ -179,8 +219,9 @@ def _collect_transformer_tensors_llama(model) -> list:
     """
     tensors = []
 
-    # Token embeddings: [vocab_size, embed_dim] — same in both conventions
-    tensors.append(("token_embd.weight", _to_f32_np(model.embedding)))
+    # Token embeddings in llama GGUF are expected by Ollama as [embed_dim, vocab_size]
+    # for this exporter path, so transpose from our [vocab_size, embed_dim].
+    tensors.append(("token_embd.weight", _to_f32_np(model.embedding).T))
 
     num_dec = len(model.decoder_layers)
     for i, layer in enumerate(model.decoder_layers):
@@ -195,18 +236,19 @@ def _collect_transformer_tensors_llama(model) -> list:
                         _to_f32_np(layer['Wo_self']).T))
 
         # Feed-forward weights
-        # Our ff_w1: [embed_dim, ff_dim].  llama ffn_up/ffn_gate: [ff_dim, embed_dim]
-        w1_T = _to_f32_np(layer['ff_w1']).T    # [ff_dim, embed_dim]
-        w2_T = _to_f32_np(layer['ff_w2']).T    # [embed_dim, ff_dim]
-        tensors.append((f"blk.{i}.ffn_gate.weight", w1_T))
-        tensors.append((f"blk.{i}.ffn_up.weight",   w1_T))
-        tensors.append((f"blk.{i}.ffn_down.weight",  w2_T))
+        # Ollama expects:
+        #   ffn_gate/up: [embed_dim, ff_dim]
+        #   ffn_down:    [ff_dim, embed_dim]
+        # which already matches our internal shapes.
+        w1 = _to_f32_np(layer['ff_w1'])        # [embed_dim, ff_dim]
+        w2 = _to_f32_np(layer['ff_w2'])        # [ff_dim, embed_dim]
+        tensors.append((f"blk.{i}.ffn_gate.weight", w1))
+        tensors.append((f"blk.{i}.ffn_up.weight",   w1))
+        tensors.append((f"blk.{i}.ffn_down.weight", w2))
 
-        # FFN biases — stored as 1-D vectors
-        tensors.append((f"blk.{i}.ffn_up.bias",
-                        _to_f32_np(layer['ff_b1']).flatten()))
-        tensors.append((f"blk.{i}.ffn_down.bias",
-                        _to_f32_np(layer['ff_b2']).flatten()))
+        # Llama checkpoints are bias-free in the FFN path.
+        # Do not export FFN biases, otherwise Ollama can reject the file with
+        # unknown/unexpected tensor names.
 
         # Layer-norm weights (gamma → llama norm weight)
         tensors.append((f"blk.{i}.attn_norm.weight",
@@ -214,9 +256,10 @@ def _collect_transformer_tensors_llama(model) -> list:
         tensors.append((f"blk.{i}.ffn_norm.weight",
                         _to_f32_np(layer['ln2_gamma']).flatten()))
 
-    # Final output projection: our [embed_dim, vocab_size] → llama [vocab_size, embed_dim]
+    # Ollama expects output.weight here as [embed_dim, vocab_size].
+    # Our tensor is already [embed_dim, vocab_size], so keep as-is.
     tensors.append(("output.weight",
-                    _to_f32_np(model.output_weights).T))
+                    _to_f32_np(model.output_weights)))
 
     # Final norm — use last decoder block's ln2 gamma, or ones if none
     if num_dec > 0:
@@ -269,10 +312,14 @@ def _transformer_metadata_llama(model, tokenizer, model_name: str) -> list:
 
     # Token types — 1 = normal, 3 = BOS, 4 = EOS, 6 = PAD
     token_types = [1] * vocab_size
-    token_types[0] = 6   # <PAD>
-    token_types[1] = 3   # <START> / BOS
-    token_types[2] = 4   # <END>  / EOS
-    token_types[3] = 1   # <UNK>
+    if vocab_size > 0:
+        token_types[0] = 6   # <PAD>
+    if vocab_size > 1:
+        token_types[1] = 3   # <START> / BOS
+    if vocab_size > 2:
+        token_types[2] = 4   # <END>  / EOS
+    if vocab_size > 3:
+        token_types[3] = 1   # <UNK>
 
     metadata = [
         # ── general ──────────────────────────────────────────────────────
@@ -292,18 +339,23 @@ def _transformer_metadata_llama(model, tokenizer, model_name: str) -> list:
         ("llama.vocab_size",                  GGUF_TYPE_UINT32,  int(vocab_size)),
 
         # ── tokenizer ─────────────────────────────────────────────────────
-        # Use "gpt2" model so llama.cpp treats tokens as plain string IDs
+        # Our tokenizer is a flat word/BPE-like table, not a sentencepiece model.
+        # Using "llama" routes through SPM tokenization and can crash at runtime
+        # with std::out_of_range in llama_tokenize. Use GPT-2 style tokenizer keys.
         ("tokenizer.ggml.model",              GGUF_TYPE_STRING,  "gpt2"),
+        ("tokenizer.ggml.pre",                GGUF_TYPE_STRING,  "default"),
         ("tokenizer.ggml.tokens",             GGUF_TYPE_ARRAY,
             (GGUF_TYPE_STRING, vocab_list)),
+        ("tokenizer.ggml.merges",             GGUF_TYPE_ARRAY,
+            (GGUF_TYPE_STRING, [])),
         ("tokenizer.ggml.token_type",         GGUF_TYPE_ARRAY,
             (GGUF_TYPE_INT32, token_types)),
         ("tokenizer.ggml.scores",             GGUF_TYPE_ARRAY,
             (GGUF_TYPE_FLOAT32, token_scores)),
-        ("tokenizer.ggml.bos_token_id",       GGUF_TYPE_UINT32,  1),
-        ("tokenizer.ggml.eos_token_id",       GGUF_TYPE_UINT32,  2),
+        ("tokenizer.ggml.bos_token_id",       GGUF_TYPE_UINT32,  1 if vocab_size > 1 else 0),
+        ("tokenizer.ggml.eos_token_id",       GGUF_TYPE_UINT32,  2 if vocab_size > 2 else 0),
         ("tokenizer.ggml.padding_token_id",   GGUF_TYPE_UINT32,  0),
-        ("tokenizer.ggml.unknown_token_id",   GGUF_TYPE_UINT32,  3),
+        ("tokenizer.ggml.unknown_token_id",   GGUF_TYPE_UINT32,  3 if vocab_size > 3 else 0),
         ("tokenizer.ggml.add_bos_token",      GGUF_TYPE_BOOL,    True),
         ("tokenizer.ggml.add_eos_token",      GGUF_TYPE_BOOL,    False),
     ]

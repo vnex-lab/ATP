@@ -21,10 +21,10 @@ except ImportError:
 
 class TransformerChatbot:
     def __init__(self, vocab_size, embed_dim=256, num_heads=8, num_layers=4,
-                 ff_dim=1024, max_seq_len=50, learning_rate=0.003,
+                 ff_dim=1024, max_seq_len=50, learning_rate=0.000012,
                  optimizer='adam', weight_decay=0.01,
                  scheduler='cosine', warmup_epochs=5,
-                 dropout_rate=0.1, grad_clip=5.0):
+                 dropout_rate=0.1, grad_clip=5.0, decoder_only=False):
         self.vocab_size   = vocab_size
         self.embed_dim    = embed_dim
         self.num_heads    = num_heads
@@ -36,6 +36,7 @@ class TransformerChatbot:
         self.current_epoch = 0
         self.gpu_available = GPU_AVAILABLE
         self.xp = cp if GPU_AVAILABLE else np
+        self.decoder_only = bool(decoder_only)
 
         # ---- Optimizer ----
         self.optimizer    = optimizer.lower()      # sgd | adam | adamw
@@ -44,6 +45,7 @@ class TransformerChatbot:
         self.opt_m        = {}                     # Adam 1st moment
         self.opt_v        = {}                     # Adam 2nd moment
         self.opt_t        = 0                      # Adam step counter
+        self._updated_param_ids = set()           # debug: which params were updated
 
         # ---- Scheduler ----
         self.scheduler    = scheduler.lower()      # constant | linear | cosine | warmup_cosine | warmup_linear
@@ -66,7 +68,8 @@ class TransformerChatbot:
         self.encoder_layers = []
         self.decoder_layers = []
         for _ in range(num_layers):
-            self.encoder_layers.append(self._init_encoder_layer())
+            if not self.decoder_only:
+                self.encoder_layers.append(self._init_encoder_layer())
             self.decoder_layers.append(self._init_decoder_layer())
         
         # Xavier initialization for output layer
@@ -82,11 +85,12 @@ class TransformerChatbot:
         print(f"   Embed dim: {embed_dim}  |  Heads: {num_heads}  |  Layers: {num_layers}")
         print(f"   FF dim: {ff_dim}  |  Max seq len: {max_seq_len}")
         print(f"   Optimizer: {optimizer.upper()}  |  Scheduler: {scheduler}")
+        print(f"   Architecture mode: {'Decoder-only (Ollama-friendly)' if self.decoder_only else 'Encoder-Decoder'}")
         print(f"   LR: {learning_rate}  |  Weight decay: {weight_decay}  |  Dropout: {dropout_rate}")
         print(f"   Warmup epochs: {warmup_epochs}  |  Grad clip: {grad_clip}")
 
         total_params = self._count_parameters()
-        print(f"   📊 Total parameters: {total_params:,}")
+        print(f"   Total parameters: {total_params:,}")
         if total_params >= 1_000_000_000:
             print(f"   BILLION PARAMETER MODEL! {total_params/1e9:.2f}B params!")
         elif total_params >= 1_000_000:
@@ -197,8 +201,12 @@ class TransformerChatbot:
         
         return output, attn_weights
     
+    def _gelu(self, x):
+        """GELU activation — avoids dead-neuron problem of ReLU."""
+        return x * 0.5 * (1.0 + self.xp.tanh(0.7978845608 * (x + 0.044715 * x ** 3)))
+
     def _feed_forward(self, x, w1, b1, w2, b2):
-        hidden = self.xp.maximum(0, self.xp.dot(x, w1) + b1)
+        hidden = self._gelu(self.xp.dot(x, w1) + b1)
         output = self.xp.dot(hidden, w2) + b2
         return output
     
@@ -251,11 +259,14 @@ class TransformerChatbot:
             )
             x = self._layer_norm(x + self_attn_output, layer['ln1_gamma'], layer['ln1_beta'])
             
-            cross_attn_output, _ = self._multi_head_attention(
-                x, encoder_output, encoder_output,
-                layer['Wq_cross'], layer['Wk_cross'], layer['Wv_cross'], layer['Wo_cross']
-            )
-            x = self._layer_norm(x + cross_attn_output, layer['ln2_gamma'], layer['ln2_beta'])
+            if self.decoder_only:
+                x = self._layer_norm(x, layer['ln2_gamma'], layer['ln2_beta'])
+            else:
+                cross_attn_output, _ = self._multi_head_attention(
+                    x, encoder_output, encoder_output,
+                    layer['Wq_cross'], layer['Wk_cross'], layer['Wv_cross'], layer['Wo_cross']
+                )
+                x = self._layer_norm(x + cross_attn_output, layer['ln2_gamma'], layer['ln2_beta'])
             
             ff_output = self._feed_forward(
                 x, layer['ff_w1'], layer['ff_b1'], layer['ff_w2'], layer['ff_b2']
@@ -265,39 +276,85 @@ class TransformerChatbot:
         return x
     
     def forward(self, input_seq, target_seq):
-        encoder_output = self.encode(input_seq)
+        if self.decoder_only:
+            encoder_output = None
+        else:
+            encoder_output = self.encode(input_seq)
         decoder_output = self.decode(target_seq, encoder_output)
         
         logits = self.xp.dot(decoder_output, self.output_weights) + self.output_bias
         
         return logits
     
-    def train_batch(self, input_batch, target_batch, learning_rate=None):
+    def train_batch(self, input_batch, target_batch, learning_rate=None, sft_loss_starts=None):
+        """
+        Train on a batch of sequences.
+
+        sft_loss_starts: optional list aligned with batch items. For decoder-only SFT,
+        each entry is the first timestep index (into target_output, 0-based) where loss
+        is applied — typically len(user_tokens)-1 so only assistant/bot continuation
+        is supervised. None entries mean full-sequence LM loss (default).
+        """
         if learning_rate is None:
             learning_rate = self.learning_rate
         
         batch_size = len(input_batch)
         total_loss = 0.0
+        xp = self.xp
+
+        # Increment Adam step counter once per batch (not per sample)
+        self.opt_t += 1
         
-        for input_seq, target_seq in zip(input_batch, target_batch):
+        for i, (input_seq, target_seq) in enumerate(zip(input_batch, target_batch)):
             input_seq = self.xp.array(input_seq).reshape(1, -1)
             target_input = self.xp.array(target_seq[:-1]).reshape(1, -1)
             target_output = self.xp.array(target_seq[1:]).reshape(1, -1)
+            T = int(target_output.shape[1])
             
             logits = self.forward(input_seq, target_input)
             
             probs = self._softmax(logits, axis=-1)
             
+            loss_mask = None
+            if (
+                sft_loss_starts is not None
+                and i < len(sft_loss_starts)
+                and sft_loss_starts[i] is not None
+                and self.decoder_only
+                and T > 0
+            ):
+                start_t = int(sft_loss_starts[i])
+                start_t = max(0, min(start_t, T - 1))
+                loss_mask = xp.zeros((1, T), dtype=xp.float32)
+                loss_mask[0, start_t:] = 1.0
+                m = float(xp.sum(loss_mask))
+                if m <= 0:
+                    loss_mask = None
+
             loss = 0.0
-            for t in range(target_output.shape[1]):
-                correct_token = int(target_output[0, t])
-                prob = float(probs[0, t, correct_token])
-                loss += -self.xp.log(prob + 1e-10)
-            
-            loss /= target_output.shape[1]
+            if loss_mask is None:
+                denom = max(T, 1)
+                for t in range(T):
+                    correct_token = int(target_output[0, t])
+                    prob = float(probs[0, t, correct_token])
+                    loss += -self.xp.log(prob + 1e-10)
+                loss /= denom
+            else:
+                denom = float(xp.sum(loss_mask))
+                denom = max(denom, 1.0)
+                for t in range(T):
+                    if float(loss_mask[0, t]) <= 0:
+                        continue
+                    correct_token = int(target_output[0, t])
+                    prob = float(probs[0, t, correct_token])
+                    loss += -self.xp.log(prob + 1e-10)
+                loss /= denom
+
             total_loss += float(loss)
             
-            self._backward_and_update(input_seq, target_input, target_output, probs, learning_rate)
+            self._backward_and_update(
+                input_seq, target_input, target_output, probs, learning_rate, loss_mask=loss_mask
+            )
         
         return total_loss / batch_size
 
@@ -306,6 +363,7 @@ class TransformerChatbot:
         xp = self.xp
         effective_lr = self.learning_rate * lr_scale
         clipped = xp.clip(grad, -self.grad_clip, self.grad_clip)
+        self._updated_param_ids.add(param_id)
 
         if self.optimizer == 'sgd':
             param -= effective_lr * clipped
@@ -329,6 +387,39 @@ class TransformerChatbot:
             param -= step + effective_lr * self.weight_decay * param
         else:
             param -= step
+
+    def clear_update_coverage(self):
+        """Clear optimizer update tracking (call at start of a training run)."""
+        self._updated_param_ids.clear()
+
+    def get_update_coverage_report(self):
+        """
+        Return update coverage of parameter groups touched by _opt_update.
+        This helps verify that expected trainable tensors are receiving updates.
+        """
+        expected = {"embedding", "out_W", "out_b"}
+        for li in range(self.num_layers):
+            expected.update({
+                f"dec{li}_ff_w1", f"dec{li}_ff_b1", f"dec{li}_ff_w2", f"dec{li}_ff_b2",
+                f"dec{li}_self_Wq", f"dec{li}_self_Wk", f"dec{li}_self_Wv", f"dec{li}_self_Wo",
+            })
+            if not self.decoder_only:
+                expected.update({
+                    f"dec{li}_cross_Wq", f"dec{li}_cross_Wk", f"dec{li}_cross_Wv", f"dec{li}_cross_Wo",
+                    f"enc{li}_ff_w1", f"enc{li}_ff_b1", f"enc{li}_ff_w2", f"enc{li}_ff_b2",
+                    f"enc{li}_self_Wq", f"enc{li}_self_Wk", f"enc{li}_self_Wv", f"enc{li}_self_Wo",
+                })
+
+        seen = set(self._updated_param_ids)
+        missing = sorted(expected - seen)
+        extra = sorted(seen - expected)
+        return {
+            "expected_count": len(expected),
+            "updated_count": len(seen),
+            "missing": missing,
+            "extra": extra,
+            "coverage_percent": (100.0 * len(expected & seen) / max(len(expected), 1)),
+        }
 
     def step_lr(self, total_epochs=100):
         """Update learning rate once per epoch according to the chosen scheduler."""
@@ -446,25 +537,46 @@ class TransformerChatbot:
         d_Q_in = xp.dot(d_Q_proj.reshape(-1, self.embed_dim),
                           layer_Wq.T).reshape(B, q_len, self.embed_dim)
         if is_self_attn:
-            # Q=K=V=x — full gradient = (d_Q + d_K + d_V) / 3  (divide to keep magnitude stable)
+            # Q=K=V=x — sum all three gradients back to input
             d_K_in = xp.dot(d_K_proj.reshape(-1, self.embed_dim),
                               layer_Wk.T).reshape(B, k_len, self.embed_dim)
             d_V_in = xp.dot(d_V_proj.reshape(-1, self.embed_dim),
                               layer_Wv.T).reshape(B, k_len, self.embed_dim)
-            d_input = (d_Q_in + d_K_in + d_V_in) / 3.0
+            d_input = d_Q_in + d_K_in + d_V_in
         else:
             # cross-attention: K, V come from encoder — only Q gradient flows back to decoder
             d_input = d_Q_in
 
-        # ---- apply all weight updates via optimizer ----
-        # Wq/Wk: gradient through softmax is noisy → lr_scale 0.1
-        # Wv: more direct value path → lr_scale 0.2; Wo: approx gradient → lr_scale 0.3
-        self._opt_update(layer_Wo, d_Wo, f'{attn_id}_Wo', lr_scale=0.3)
-        self._opt_update(layer_Wv, d_Wv, f'{attn_id}_Wv', lr_scale=0.2)
-        self._opt_update(layer_Wq, d_Wq, f'{attn_id}_Wq', lr_scale=0.1)
-        self._opt_update(layer_Wk, d_Wk, f'{attn_id}_Wk', lr_scale=0.1)
+        # ---- apply all weight updates via optimizer (uniform lr — no manual scaling) ----
+        self._opt_update(layer_Wo, d_Wo, f'{attn_id}_Wo')
+        self._opt_update(layer_Wv, d_Wv, f'{attn_id}_Wv')
+        self._opt_update(layer_Wq, d_Wq, f'{attn_id}_Wq')
+        self._opt_update(layer_Wk, d_Wk, f'{attn_id}_Wk')
 
         return d_input
+
+    def _layer_norm_backward(self, d_out, x_in, gamma, beta, gamma_id, beta_id, epsilon=1e-5):
+        """Backprop through layer norm. Updates gamma/beta in-place. Returns d_x."""
+        xp = self.xp
+        mean  = xp.mean(x_in, axis=-1, keepdims=True)
+        var   = xp.var(x_in,  axis=-1, keepdims=True)
+        std   = xp.sqrt(var + epsilon)
+        x_hat = (x_in - mean) / std
+        N     = x_in.shape[-1]
+
+        # Compute d_x FIRST using the unmodified gamma, then update gamma/beta
+        d_x_hat = d_out * gamma
+        d_var   = xp.sum(d_x_hat * (x_in - mean) * -0.5 * (var + epsilon) ** -1.5, axis=-1, keepdims=True)
+        d_mean  = xp.sum(d_x_hat * -1.0 / std, axis=-1, keepdims=True) + d_var * (-2.0 / N) * xp.sum(x_in - mean, axis=-1, keepdims=True)
+        d_x     = d_x_hat / std + d_var * 2.0 * (x_in - mean) / N + d_mean / N
+
+        # Now safe to update gamma/beta (after d_x is fully computed)
+        d_gamma = xp.sum(d_out * x_hat, axis=(0, 1), keepdims=False).reshape(gamma.shape)
+        d_beta  = xp.sum(d_out,         axis=(0, 1), keepdims=False).reshape(beta.shape)
+        self._opt_update(gamma, d_gamma, gamma_id)
+        self._opt_update(beta,  d_beta,  beta_id)
+
+        return d_x
 
     def _apply_dropout(self, x):
         """Inverted dropout: scale kept activations up so inference needs no scaling."""
@@ -483,15 +595,18 @@ class TransformerChatbot:
         for layer in self.encoder_layers:
             attn_out, attn_cache = self._attn_forward_cached(x, x, x,
                 layer['Wq'], layer['Wk'], layer['Wv'], layer['Wo'])
-            x = self._layer_norm(x + attn_out, layer['ln1_gamma'], layer['ln1_beta'])
+            x_pre_ln1 = x + attn_out          # input to LN1
+            x = self._layer_norm(x_pre_ln1, layer['ln1_gamma'], layer['ln1_beta'])
             ff_input = x
             ff_pre   = xp.dot(x, layer['ff_w1']) + layer['ff_b1']
-            ff_relu_raw = xp.maximum(0, ff_pre)
+            ff_relu_raw = self._gelu(ff_pre)
             ff_relu, drop_mask = self._apply_dropout(ff_relu_raw)
             ff_out   = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
-            x = self._layer_norm(x + ff_out, layer['ln2_gamma'], layer['ln2_beta'])
+            x_pre_ln2 = x + ff_out
+            x = self._layer_norm(x_pre_ln2, layer['ln2_gamma'], layer['ln2_beta'])
             cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
-                          'drop_mask': drop_mask, 'self_attn': attn_cache})
+                          'drop_mask': drop_mask, 'self_attn': attn_cache,
+                          'x_pre_ln1': x_pre_ln1, 'x_pre_ln2': x_pre_ln2})
         return x, cache
 
     def _decode_with_cache(self, target_input, encoder_output):
@@ -505,32 +620,57 @@ class TransformerChatbot:
             self_out, self_attn_cache = self._attn_forward_cached(x, x, x,
                 layer['Wq_self'], layer['Wk_self'], layer['Wv_self'], layer['Wo_self'],
                 mask=causal_mask)
-            x = self._layer_norm(x + self_out, layer['ln1_gamma'], layer['ln1_beta'])
+            x_pre_ln1 = x + self_out          # input to LN1
+            x = self._layer_norm(x_pre_ln1, layer['ln1_gamma'], layer['ln1_beta'])
 
-            cross_out, cross_attn_cache = self._attn_forward_cached(x, encoder_output, encoder_output,
-                layer['Wq_cross'], layer['Wk_cross'], layer['Wv_cross'], layer['Wo_cross'])
-            ff_input = self._layer_norm(x + cross_out, layer['ln2_gamma'], layer['ln2_beta'])
+            if self.decoder_only:
+                cross_attn_cache = None
+                x_pre_ln2 = x
+                ff_input = self._layer_norm(x, layer['ln2_gamma'], layer['ln2_beta'])
+            else:
+                cross_out, cross_attn_cache = self._attn_forward_cached(x, encoder_output, encoder_output,
+                    layer['Wq_cross'], layer['Wk_cross'], layer['Wv_cross'], layer['Wo_cross'])
+                x_pre_ln2 = x + cross_out
+                ff_input = self._layer_norm(x_pre_ln2, layer['ln2_gamma'], layer['ln2_beta'])
 
             ff_pre  = xp.dot(ff_input, layer['ff_w1']) + layer['ff_b1']
-            ff_relu_raw = xp.maximum(0, ff_pre)
+            ff_relu_raw = self._gelu(ff_pre)
             ff_relu, drop_mask = self._apply_dropout(ff_relu_raw)
             ff_out  = xp.dot(ff_relu, layer['ff_w2']) + layer['ff_b2']
-            x = self._layer_norm(ff_input + ff_out, layer['ln3_gamma'], layer['ln3_beta'])
+            x_pre_ln3 = ff_input + ff_out
+            x = self._layer_norm(x_pre_ln3, layer['ln3_gamma'], layer['ln3_beta'])
             cache.append({'ff_input': ff_input, 'ff_pre': ff_pre, 'ff_relu': ff_relu,
                           'drop_mask': drop_mask,
-                          'self_attn': self_attn_cache, 'cross_attn': cross_attn_cache})
+                          'self_attn': self_attn_cache, 'cross_attn': cross_attn_cache,
+                          'x_pre_ln1': x_pre_ln1, 'x_pre_ln2': x_pre_ln2, 'x_pre_ln3': x_pre_ln3})
         return x, cache
 
     def _ff_backward(self, d_x_out, layer, cache, layer_id):
-        """Backprop through one FF sub-layer. Updates weights. Returns gradient w.r.t FF input."""
+        """Backprop through one FF sub-layer + its surrounding layer norm. Updates all weights."""
         xp = self.xp
         ff_input   = cache['ff_input']
         ff_pre     = cache['ff_pre']
-        ff_relu    = cache['ff_relu']          # post-dropout value
+        ff_relu    = cache['ff_relu']
         drop_mask  = cache.get('drop_mask')
         target_len = ff_input.shape[1]
 
-        d_ff_out = d_x_out
+        # Determine which layer norm wraps this FF block (ln3 for decoder, ln2 for encoder)
+        if 'ln3_gamma' in layer:
+            ln_gamma_key, ln_beta_key = 'ln3_gamma', 'ln3_beta'
+            x_pre_ln_key = 'x_pre_ln3'
+        else:
+            ln_gamma_key, ln_beta_key = 'ln2_gamma', 'ln2_beta'
+            x_pre_ln_key = 'x_pre_ln2'
+
+        # Back through layer norm (ln3/ln2) — updates gamma/beta, returns gradient into (ff_input + ff_out)
+        x_pre_ln = cache[x_pre_ln_key]
+        d_residual = self._layer_norm_backward(
+            d_x_out, x_pre_ln,
+            layer[ln_gamma_key], layer[ln_beta_key],
+            f'{layer_id}_{ln_gamma_key}', f'{layer_id}_{ln_beta_key}'
+        )
+
+        d_ff_out = d_residual  # residual: x_pre_ln = ff_input + ff_out  → d_ff_input += d_residual below
 
         # ---- ff_w2 backward ----
         d_W2 = xp.dot(ff_relu.reshape(-1, self.ff_dim).T,
@@ -545,28 +685,30 @@ class TransformerChatbot:
         else:
             d_ff_relu = d_ff_relu_drop
 
-        # ---- undo ReLU ----
-        d_ff_pre = d_ff_relu * (ff_pre > 0)
+        # ---- undo GELU ----
+        tanh_arg = 0.7978845608 * (ff_pre + 0.044715 * ff_pre ** 3)
+        tanh_val = xp.tanh(tanh_arg)
+        gelu_grad = 0.5 * (1.0 + tanh_val) + 0.5 * ff_pre * (1.0 - tanh_val ** 2) * 0.7978845608 * (1.0 + 3.0 * 0.044715 * ff_pre ** 2)
+        d_ff_pre = d_ff_relu * gelu_grad
 
         # ---- ff_w1 backward ----
         d_W1 = xp.dot(ff_input.reshape(-1, self.embed_dim).T,
                        d_ff_pre.reshape(-1, self.ff_dim))
         d_b1 = xp.sum(d_ff_pre.reshape(-1, self.ff_dim), axis=0, keepdims=True)
 
-        # Gradient back through ff_input (for next layer's output)
         d_ff_input = xp.dot(d_ff_pre.reshape(-1, self.ff_dim),
                              layer['ff_w1'].T).reshape(ff_input.shape)
 
-        # Update FF weights via optimizer
+        # Update FF weights
         self._opt_update(layer['ff_w1'], d_W1, f'{layer_id}_ff_w1')
         self._opt_update(layer['ff_b1'], d_b1, f'{layer_id}_ff_b1')
         self._opt_update(layer['ff_w2'], d_W2, f'{layer_id}_ff_w2')
         self._opt_update(layer['ff_b2'], d_b2, f'{layer_id}_ff_b2')
 
-        # Total gradient back through residual + FF input
-        return d_x_out + d_ff_input
+        # Residual: total gradient back through ff_input = d_residual (skip) + d_ff_input (FF path)
+        return d_residual + d_ff_input
 
-    def _backward_and_update(self, input_seq, target_input, target_output, probs, lr):
+    def _backward_and_update(self, input_seq, target_input, target_output, probs, lr, loss_mask=None):
         xp = self.xp
         batch_size, target_len, _ = probs.shape
 
@@ -574,36 +716,71 @@ class TransformerChatbot:
         d_logits = probs.copy()
         for t in range(target_len):
             d_logits[0, t, int(target_output[0, t])] -= 1.0
-        d_logits /= max(target_len, 1)
+        if loss_mask is not None:
+            m = float(xp.sum(loss_mask))
+            m = max(m, 1.0)
+            d_logits *= loss_mask[:, :, xp.newaxis] / m
+        else:
+            d_logits /= max(target_len, 1)
 
         # === FORWARD WITH CACHE (captures all intermediates for full backward) ===
-        encoder_output, enc_cache = self._encode_with_cache(input_seq)
+        if self.decoder_only:
+            encoder_output, enc_cache = None, []
+        else:
+            encoder_output, enc_cache = self._encode_with_cache(input_seq)
         decoder_output, dec_cache = self._decode_with_cache(target_input, encoder_output)
 
         # === OUTPUT LAYER ===
         d_W_out = xp.dot(decoder_output.reshape(-1, self.embed_dim).T,
                           d_logits.reshape(-1, self.vocab_size))
         d_b_out = xp.sum(d_logits.reshape(-1, self.vocab_size), axis=0, keepdims=True)
+        # Gradient into decoder must use the PRE-UPDATE output weights.
+        # Using updated weights here injects optimizer-step noise directly into
+        # the backward path and can stall learning near random-loss levels.
+        w_out_before_update = self.output_weights.copy()
+        d_x = xp.dot(d_logits, w_out_before_update.T)
         self._opt_update(self.output_weights, d_W_out, 'out_W')
         self._opt_update(self.output_bias,    d_b_out, 'out_b')
 
-        # Gradient into the last decoder layer's output (use original output_weights before update)
-        d_x = xp.dot(d_logits, self.output_weights.T)
-
         d_embed = xp.zeros_like(self.embedding)
 
-        # Increment Adam step counter once per forward-backward pass
-        self.opt_t += 1
+        # NOTE: opt_t is incremented once per batch in train_batch, not here
 
         # === DECODER LAYERS BACKWARD (deepest to shallowest) ===
         n = self.num_layers
         for i, (layer, cache) in enumerate(zip(reversed(self.decoder_layers), reversed(dec_cache))):
-            li = n - 1 - i   # actual layer index (for unique param IDs)
+            li = n - 1 - i
+
+            # Back through FF + LN3 (handled inside _ff_backward)
             d_x = self._ff_backward(d_x, layer, cache, f'dec{li}')
-            d_x = self._attn_backward(d_x, cache['cross_attn'],
-                                       layer['Wq_cross'], layer['Wk_cross'],
-                                       layer['Wv_cross'], layer['Wo_cross'], lr,
-                                       is_self_attn=False, attn_id=f'dec{li}_cross')
+
+            # d_x is now gradient w.r.t. ff_input, which came out of LN2
+            # Back through LN2 → into (x + cross_attn_out) residual
+            if not self.decoder_only:
+                d_x = self._layer_norm_backward(
+                    d_x, cache['x_pre_ln2'],
+                    layer['ln2_gamma'], layer['ln2_beta'],
+                    f'dec{li}_ln2_gamma', f'dec{li}_ln2_beta'
+                )
+                d_x = self._attn_backward(d_x, cache['cross_attn'],
+                                           layer['Wq_cross'], layer['Wk_cross'],
+                                           layer['Wv_cross'], layer['Wo_cross'], lr,
+                                           is_self_attn=False, attn_id=f'dec{li}_cross')
+            else:
+                # decoder-only: ff_input came from LN2 applied to x (no residual add)
+                d_x = self._layer_norm_backward(
+                    d_x, cache['x_pre_ln2'],
+                    layer['ln2_gamma'], layer['ln2_beta'],
+                    f'dec{li}_ln2_gamma', f'dec{li}_ln2_beta'
+                )
+
+            # d_x is now gradient w.r.t. x after self-attn LN1 residual (x + self_attn_out)
+            # Back through LN1
+            d_x = self._layer_norm_backward(
+                d_x, cache['x_pre_ln1'],
+                layer['ln1_gamma'], layer['ln1_beta'],
+                f'dec{li}_ln1_gamma', f'dec{li}_ln1_beta'
+            )
             d_x = self._attn_backward(d_x, cache['self_attn'],
                                        layer['Wq_self'], layer['Wk_self'],
                                        layer['Wv_self'], layer['Wo_self'], lr,
@@ -615,26 +792,33 @@ class TransformerChatbot:
             if tok < self.vocab_size:
                 d_embed[tok] += d_x[0, t, :]
 
-        # === ENCODER LAYERS BACKWARD ===
-        enc_seq_len = input_seq.shape[1]
-        d_enc = xp.broadcast_to(
-            xp.mean(d_x, axis=1, keepdims=True),
-            (1, enc_seq_len, self.embed_dim)
-        ).copy()
+        if not self.decoder_only:
+            # === ENCODER LAYERS BACKWARD ===
+            # Use the final decoder gradient directly (broadcast to encoder seq_len)
+            enc_seq_len = input_seq.shape[1]
+            # Take the last decoder position gradient and tile it across encoder positions
+            d_last = d_x[:, -1:, :]  # (1, 1, embed_dim)
+            d_enc = xp.repeat(d_last, enc_seq_len, axis=1)  # (1, enc_seq_len, embed_dim)
 
-        for i, (layer, cache) in enumerate(zip(reversed(self.encoder_layers), reversed(enc_cache))):
-            li = n - 1 - i
-            d_enc = self._ff_backward(d_enc, layer, cache, f'enc{li}')
-            d_enc = self._attn_backward(d_enc, cache['self_attn'],
-                                         layer['Wq'], layer['Wk'],
-                                         layer['Wv'], layer['Wo'], lr,
-                                         is_self_attn=True, attn_id=f'enc{li}_self')
+            for i, (layer, cache) in enumerate(zip(reversed(self.encoder_layers), reversed(enc_cache))):
+                li = n - 1 - i
+                d_enc = self._ff_backward(d_enc, layer, cache, f'enc{li}')
+                # Back through LN1 before self-attn
+                d_enc = self._layer_norm_backward(
+                    d_enc, cache['x_pre_ln1'],
+                    layer['ln1_gamma'], layer['ln1_beta'],
+                    f'enc{li}_ln1_gamma', f'enc{li}_ln1_beta'
+                )
+                d_enc = self._attn_backward(d_enc, cache['self_attn'],
+                                             layer['Wq'], layer['Wk'],
+                                             layer['Wv'], layer['Wo'], lr,
+                                             is_self_attn=True, attn_id=f'enc{li}_self')
 
-        # Gradient to input embeddings
-        for t in range(input_seq.shape[1]):
-            tok = int(input_seq[0, t])
-            if tok < self.vocab_size:
-                d_embed[tok] += d_enc[0, t, :] * 0.5
+            # Gradient to input embeddings
+            for t in range(input_seq.shape[1]):
+                tok = int(input_seq[0, t])
+                if tok < self.vocab_size:
+                    d_embed[tok] += d_enc[0, t, :] * 0.5
 
         # === UPDATE EMBEDDINGS (use optimizer) ===
         self._opt_update(self.embedding, d_embed, 'embedding')
@@ -643,10 +827,13 @@ class TransformerChatbot:
         self.training = False   # disable dropout during inference
         input_tokens = tokenizer.encode(input_text)
         input_seq = self.xp.array(input_tokens).reshape(1, -1)
-        
-        encoder_output = self.encode(input_seq)
-        
-        generated = [tokenizer.word2idx['<START>']]
+
+        if self.decoder_only:
+            encoder_output = None
+            generated = list(input_tokens)
+        else:
+            encoder_output = self.encode(input_seq)
+            generated = [tokenizer.word2idx['<START>']]
         
         for _ in range(max_length):
             # Cap to max_seq_len so positional encoding never overflows
@@ -673,6 +860,9 @@ class TransformerChatbot:
                 generated.append(next_token)
         
         self.training = True    # restore training mode
+        if self.decoder_only:
+            continuation = generated[len(input_tokens):]
+            return tokenizer.decode(continuation)
         return tokenizer.decode(generated[1:])
     
     def save(self, filepath):
@@ -684,6 +874,7 @@ class TransformerChatbot:
             'ff_dim': self.ff_dim,
             'max_seq_len': self.max_seq_len,
             'learning_rate': self.learning_rate,
+            'decoder_only': self.decoder_only,
             'embedding': cp.asnumpy(self.embedding) if self.gpu_available else self.embedding,
             'output_weights': cp.asnumpy(self.output_weights) if self.gpu_available else self.output_weights,
             'output_bias': cp.asnumpy(self.output_bias) if self.gpu_available else self.output_bias,
@@ -722,7 +913,8 @@ class TransformerChatbot:
             num_layers=model_data['num_layers'],
             ff_dim=model_data['ff_dim'],
             max_seq_len=model_data['max_seq_len'],
-            learning_rate=model_data['learning_rate']
+            learning_rate=model_data['learning_rate'],
+            decoder_only=model_data.get('decoder_only', False)
         )
         
         xp = model.xp

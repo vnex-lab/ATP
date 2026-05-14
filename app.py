@@ -123,6 +123,8 @@ if 'tokenizer_bytes' not in st.session_state:
     st.session_state.tokenizer_bytes = None
 if 'gguf_bytes' not in st.session_state:
     st.session_state.gguf_bytes = None
+if 'training_data_profile' not in st.session_state:
+    st.session_state.training_data_profile = None  # "sft_pack" | "assistant_pack" | None
 
 def main():
     # Main title
@@ -152,131 +154,84 @@ def data_upload_section():
     
     st.write("""
     Upload your conversation training data. Supports multiple formats:
-    - **DailyDialog**: Built-in high-quality chat dataset!
+    - **Built-in Assistant Dialog**: Large, general assistant-style pairs (default ~90 MB JSON; adjustable).
+    - **Built-in SFT Pack**: Instruction → response pairs built so **SFT mode** (decoder-only) has a clear user/assistant boundary.
     - **JSON**: Conversation format or code debugging format
     - **CSV**: Two columns (user, bot) or (question, answer) or (input, output)
     - **Text**: Line-by-line with separators (|, →, -, :, tab)
     - **Numbered JSON**: Format like `0:{...} 1:{...}`
     """)
     
-    upload_type = st.radio("Choose upload method:", ["Upload File", "Enter Text Manually", "Use Built-in DailyDialog"])
-    
-    if upload_type == "Use Built-in DailyDialog":
-        st.subheader("DailyDialog Dataset")
-        st.write("This is a high-quality dataset of human-to-human daily conversations.")
-        
-        if st.button("Load DailyDialog Samples"):
-            with st.spinner("Loading samples..."):
-                samples = [
-                    # ── Greetings & farewells ─────────────────────────────
-                    {"user": "hello", "bot": "hi there! how can i help you today?"},
-                    {"user": "hi", "bot": "hello! great to hear from you."},
-                    {"user": "hey", "bot": "hey! what's up?"},
-                    {"user": "good morning", "bot": "good morning! hope you have a wonderful day."},
-                    {"user": "good afternoon", "bot": "good afternoon! how's your day going?"},
-                    {"user": "good evening", "bot": "good evening! how was your day?"},
-                    {"user": "goodbye", "bot": "goodbye! take care and have a great day."},
-                    {"user": "bye", "bot": "bye! talk to you later."},
-                    {"user": "see you later", "bot": "see you! have a good one."},
-                    {"user": "take care", "bot": "you too! take care."},
-                    {"user": "nice to meet you", "bot": "nice to meet you too!"},
-                    {"user": "it was nice talking to you", "bot": "likewise! feel free to chat anytime."},
+    upload_type = st.radio(
+        "Choose upload method:",
+        [
+            "Upload File",
+            "Enter Text Manually",
+            "Use Built-in Assistant Dialog",
+            "Use Built-in SFT Pack (decoder-only + SFT)",
+        ],
+    )
 
-                    # ── How are you ───────────────────────────────────────
-                    {"user": "how are you", "bot": "i'm doing well, thanks for asking! how about you?"},
-                    {"user": "how are you doing", "bot": "i'm great, thanks! what about you?"},
-                    {"user": "how's it going", "bot": "pretty good! how about on your end?"},
-                    {"user": "how have you been", "bot": "i've been good, thanks! hope you have too."},
-                    {"user": "are you doing okay", "bot": "yes, doing well! how are you feeling?"},
-                    {"user": "i'm doing well thanks", "bot": "that's great to hear!"},
-                    {"user": "i'm fine thanks", "bot": "glad to hear it!"},
-                    {"user": "not too bad", "bot": "good to hear! anything exciting going on?"},
-                    {"user": "i'm a bit tired today", "bot": "sorry to hear that. maybe a short rest would help."},
-                    {"user": "i'm feeling great today", "bot": "that's wonderful! what's making you feel so good?"},
-                    {"user": "i feel a bit down", "bot": "i'm sorry to hear that. is there anything i can do to help?"},
-                    {"user": "i'm stressed out", "bot": "that's tough. taking a few deep breaths can help sometimes."},
-                    {"user": "i'm exhausted", "bot": "sounds like you need some rest. take it easy tonight."},
-                    {"user": "i'm really happy today", "bot": "that's awesome! what happened?"},
+    if upload_type == "Use Built-in Assistant Dialog":
+        st.subheader("Built-in Assistant Dialog")
+        st.write(
+            "Professional assistant-style replies (e.g. **Hello** → **Hello! How can I help you today?**), "
+            "plus many help-desk and learning topics. Size is **JSON in RAM/disk** — your GTX 1650 **VRAM** "
+            "is mostly from **model size**, not this slider. If RAM is tight, choose a smaller MB."
+        )
+        target_mb = st.slider(
+            "Approximate dataset size (MB)",
+            min_value=15,
+            max_value=100,
+            value=90,
+            help="Target serialized JSON size. Actual size can differ by a few MB.",
+        )
+        if st.button("Generate & load built-in dataset"):
+            with st.spinner("Generating conversation pairs (may take a few seconds)..."):
+                from builtin_assistant_dataset import (
+                    build_builtin_assistant_dataset,
+                    dataset_json_size_bytes,
+                )
 
-                    # ── Small talk & weather ──────────────────────────────
-                    {"user": "what's the weather like today", "bot": "i don't have live data, but i hope it's nice where you are!"},
-                    {"user": "it's raining outside", "bot": "stay dry! rainy days are great for staying in and relaxing."},
-                    {"user": "it's sunny today", "bot": "enjoy the sunshine! great day to go outside."},
-                    {"user": "it's really cold today", "bot": "bundle up and stay warm!"},
-                    {"user": "it's hot outside", "bot": "stay hydrated and try to stay in the shade."},
-                    {"user": "i love this weather", "bot": "me too! perfect weather really lifts the mood."},
-                    {"user": "what day is it today", "bot": "i don't have access to real-time info, but you can check your phone!"},
-                    {"user": "i'm bored", "bot": "maybe try a new hobby or watch something you enjoy!"},
-                    {"user": "i have nothing to do", "bot": "a good book or a walk outside can be refreshing!"},
-                    {"user": "tell me something interesting", "bot": "did you know honey never spoils? archaeologists found 3000-year-old honey in egypt that was still good!"},
-                    {"user": "say something funny", "bot": "why don't scientists trust atoms? because they make up everything!"},
-                    {"user": "can you tell me a joke", "bot": "sure! why did the computer go to school? to improve its bytes!"},
+                samples = build_builtin_assistant_dataset(
+                    target_bytes=int(target_mb * 1024 * 1024),
+                )
+                st.session_state.training_data = samples
+                st.session_state.training_data_profile = "assistant_pack"
+                mb = dataset_json_size_bytes(samples) / (1024 * 1024)
+                st.success(
+                    f"Loaded **{len(samples):,}** pairs (~**{mb:.1f} MB** JSON). "
+                    "Head to **Model Setup**, then **Training**."
+                )
 
-                    # ── Food & drinks ─────────────────────────────────────
-                    {"user": "i'm hungry", "bot": "maybe grab a snack or cook something you enjoy!"},
-                    {"user": "what should i eat for dinner", "bot": "how about pasta or a nice stir fry? simple and delicious."},
-                    {"user": "do you like coffee", "bot": "i think coffee is great for those early mornings!"},
-                    {"user": "i love coffee", "bot": "nothing beats a good cup of coffee to start the day!"},
-                    {"user": "do you like food", "bot": "i think trying new foods is a great way to experience different cultures!"},
-                    {"user": "what's your favorite food", "bot": "i think anything homemade is the best!"},
-                    {"user": "i just had a great meal", "bot": "that sounds wonderful! good food always makes the day better."},
-                    {"user": "i can't decide what to eat", "bot": "when in doubt, something simple like soup or a sandwich is always a solid choice."},
+    elif upload_type == "Use Built-in SFT Pack (decoder-only + SFT)":
+        st.subheader("Built-in SFT Pack")
+        st.write(
+            "This pack is **only** meant for **decoder-only** training with **SFT turned ON** on the Training tab. "
+            "Every **user** row reads like an **instruction, task, or question**; every **bot** row is the **assistant completion**. "
+            "That way masked loss focuses on learning *how to answer*, not on copying chit-chat in the user half."
+        )
+        sft_rows = st.slider(
+            "Number of training pairs",
+            min_value=3_000,
+            max_value=100_000,
+            value=25_000,
+            step=1_000,
+            help="Unique templates are repeated with shuffled cycles to reach this count. "
+            "Smaller = faster epochs; larger = more repetition of the same patterns.",
+        )
+        if st.button("Generate & load SFT pack"):
+            with st.spinner("Building SFT-oriented pairs..."):
+                from builtin_sft_dataset import build_builtin_sft_dataset, dataset_json_size_bytes
 
-                    # ── Hobbies & interests ───────────────────────────────
-                    {"user": "what do you do for fun", "bot": "i enjoy learning new things and having great conversations!"},
-                    {"user": "do you like music", "bot": "i think music is wonderful — it can really change your mood."},
-                    {"user": "i love reading", "bot": "reading is great! it's one of the best ways to learn and relax."},
-                    {"user": "i like watching movies", "bot": "movies are a great way to unwind! what kind do you enjoy?"},
-                    {"user": "i enjoy hiking", "bot": "that sounds amazing! being out in nature is so refreshing."},
-                    {"user": "i play video games", "bot": "that's fun! gaming is a great way to relax and challenge yourself."},
-                    {"user": "i like cooking", "bot": "cooking is such a rewarding skill! do you have a favorite dish you like to make?"},
-                    {"user": "i enjoy drawing", "bot": "art is a wonderful way to express yourself!"},
-                    {"user": "i've been working out", "bot": "nice work! staying active is really important for feeling good."},
-                    {"user": "i went for a run today", "bot": "great job! exercise is one of the best mood boosters."},
-                    {"user": "i'm learning a new skill", "bot": "that's exciting! learning new things keeps the mind sharp."},
-
-                    # ── Work & study ──────────────────────────────────────
-                    {"user": "i have a lot of work today", "bot": "hang in there! take it one task at a time."},
-                    {"user": "work was tough today", "bot": "sorry to hear that. make sure to rest and recharge tonight."},
-                    {"user": "i finished all my work", "bot": "great job! you deserve a break after that."},
-                    {"user": "i'm studying for an exam", "bot": "good luck! regular breaks while studying really help with memory."},
-                    {"user": "i passed my exam", "bot": "congratulations! all that hard work paid off."},
-                    {"user": "i have a meeting later", "bot": "good luck! i'm sure you'll do great."},
-                    {"user": "work is going well", "bot": "that's great to hear! keep up the good work."},
-
-                    # ── Advice & general questions ────────────────────────
-                    {"user": "can you help me", "bot": "of course! what do you need help with?"},
-                    {"user": "i need some advice", "bot": "sure, i'm happy to help. what's on your mind?"},
-                    {"user": "what do you think i should do", "bot": "it depends on the situation. tell me more and i'll try to help."},
-                    {"user": "i don't know what to do", "bot": "that's okay. sometimes it helps to take a step back and think it through."},
-                    {"user": "thank you", "bot": "you're welcome! happy to help anytime."},
-                    {"user": "thanks", "bot": "no problem at all!"},
-                    {"user": "thanks a lot", "bot": "glad i could help!"},
-                    {"user": "you're very helpful", "bot": "thank you! that means a lot."},
-                    {"user": "i appreciate your help", "bot": "anytime! feel free to ask if you need anything else."},
-                    {"user": "that was helpful", "bot": "glad to hear it! let me know if there's anything else."},
-                    {"user": "i'm not sure about that", "bot": "that's totally fine. take your time to figure it out."},
-                    {"user": "i agree with you", "bot": "great! it's always nice when we see things the same way."},
-                    {"user": "i disagree", "bot": "that's perfectly fine! different perspectives are always interesting."},
-                    {"user": "can you explain that", "bot": "of course! let me try to make it clearer."},
-                    {"user": "i understand now", "bot": "glad that helped! let me know if you have more questions."},
-                    {"user": "what do you think", "bot": "i think it really depends on the context. what's your view?"},
-                    {"user": "do you have any suggestions", "bot": "sure! tell me more about what you're working on and i'll try to help."},
-
-                    # ── Feelings & support ────────────────────────────────
-                    {"user": "i'm excited", "bot": "that's great! what are you excited about?"},
-                    {"user": "i'm nervous", "bot": "take a deep breath. you've got this!"},
-                    {"user": "i'm scared", "bot": "it's okay to feel that way. what's worrying you?"},
-                    {"user": "i'm confused", "bot": "let's work through it together. what's got you confused?"},
-                    {"user": "i feel lonely", "bot": "i'm sorry to hear that. remember you're not alone, and talking always helps."},
-                    {"user": "i had a bad day", "bot": "i'm sorry to hear that. tomorrow is a fresh start!"},
-                    {"user": "i had a great day", "bot": "that's wonderful! glad things went well for you."},
-                    {"user": "everything is going well", "bot": "that's amazing! enjoy it."},
-                    {"user": "things are a bit tough right now", "bot": "hang in there. tough times don't last forever."},
-                ]
-                # Multiply to give the model enough repetitions to learn from
-                st.session_state.training_data = samples * 12
-                st.success(f"Loaded {len(st.session_state.training_data):,} conversation samples ({len(samples)} unique pairs × 12). Head to Model Setup to train!")
+                samples = build_builtin_sft_dataset(target_rows=int(sft_rows))
+                st.session_state.training_data = samples
+                st.session_state.training_data_profile = "sft_pack"
+                mb = dataset_json_size_bytes(samples) / (1024 * 1024)
+                st.success(
+                    f"Loaded **{len(samples):,}** SFT-style pairs (~**{mb:.1f} MB** JSON). "
+                    "Create a **decoder-only** model, then in **Training** enable **SFT**."
+                )
 
     elif upload_type == "Upload File":
         uploaded_file = st.file_uploader("Upload conversation data", type=['json', 'txt', 'csv', 'tsv', 'jsonl', 'parquet'])
@@ -562,25 +517,89 @@ def model_setup_section():
     
     with col1:
         st.subheader("Tokenizer Settings")
-        max_vocab_size = st.number_input("Maximum vocabulary size:", 1000, 50000, 10000, 1000)
-        
+        st.caption(
+            "Vocabulary size is **at most** your *Maximum vocabulary size*, but usually it is the "
+            "number of **unique word tokens** in your training text (plus padding if enabled). "
+            "Seeing **~955** means your corpus used ~951 distinct words — not a bug. Padding adds "
+            "common English so chat uses fewer `<UNK>` tokens."
+        )
+        max_vocab_size = st.number_input(
+            "Maximum vocabulary size:",
+            1000,
+            50000,
+            12000,
+            500,
+            help="Hard cap on rows in the embedding table. Corpus + padding cannot exceed this.",
+        )
+        pad_vocab = st.checkbox(
+            "Pad with common English words (recommended if corpus vocab is small)",
+            value=True,
+            help="Merges ~4k frequent English tokens (from bundled data/common_words_en.txt) until "
+                 "your vocab reaches the target below (capped by maximum vocabulary size).",
+        )
+        pad_target = st.number_input(
+            "Target vocab size after padding",
+            2000,
+            50000,
+            6000,
+            500,
+            disabled=not pad_vocab,
+            help="Stops adding padding words once this size is reached (or max vocabulary size).",
+        )
+
+        if st.button("Estimate unique words in training text"):
+            tok = ChatbotTokenizer(max_vocab_size=max_vocab_size)
+            sample = st.session_state.training_data[:8000]
+            if len(st.session_state.training_data) > 8000:
+                st.caption("(Using first 8,000 pairs for speed — close estimate for huge sets.)")
+            uq: set[str] = set()
+            for conv in sample:
+                uq.update(tok.tokenize(conv.get("user", "")))
+                uq.update(tok.tokenize(conv.get("bot", "")))
+            st.info(
+                f"~**{len(uq):,}** unique word tokens in sample (specials not included). "
+                f"Full **Build Vocabulary** may differ slightly if you pad or use a different slice."
+            )
+
         if st.button("Build Vocabulary"):
             with st.spinner("Building vocabulary..."):
-                # Collect all texts
                 all_texts = []
                 for conv in st.session_state.training_data:
-                    all_texts.append(conv['user'])
-                    all_texts.append(conv['bot'])
-                
-                # Build tokenizer
+                    all_texts.append(conv["user"])
+                    all_texts.append(conv["bot"])
+
                 tokenizer = ChatbotTokenizer(max_vocab_size=max_vocab_size)
-                tokenizer.build_vocabulary(all_texts)
+                pad_list = None
+                pad_until = 0
+                if pad_vocab:
+                    from english_vocab_padding import get_padding_word_list
+
+                    pad_list = get_padding_word_list()
+                    pad_until = int(min(pad_target, max_vocab_size))
+
+                tokenizer.build_vocabulary(
+                    all_texts,
+                    pad_with_words=pad_list if pad_vocab else None,
+                    pad_until=pad_until if pad_vocab else 0,
+                )
                 st.session_state.tokenizer = tokenizer
-                
+
                 vocab_info = tokenizer.get_vocab_info()
                 st.success(f"Vocabulary built! Size: {vocab_info['vocab_size']}")
-                
-                # Show vocabulary info
+                if pad_vocab and tokenizer.vocab_size < min(pad_target, max_vocab_size):
+                    st.warning(
+                        f"Vocabulary stopped at **{tokenizer.vocab_size}** before reaching your padding "
+                        f"target **{min(pad_target, max_vocab_size)}** — the bundled word list ran out or "
+                        f"overlapped heavily with your corpus. You can still raise **Maximum vocabulary size** "
+                        f"and append more lines to **data/common_words_en.txt** if you need a larger table."
+                    )
+                if vocab_info["vocab_size"] < 2500:
+                    st.warning(
+                        "Vocab is still under **2,500** types — training may be easier (lower CE floor) "
+                        "but generation can be brittle. Increase **Target vocab size after padding** or "
+                        "**Maximum vocabulary size**, or add more diverse training text."
+                    )
+
                 st.write("**Vocabulary Info:**")
                 st.json(vocab_info)
     
@@ -597,9 +616,9 @@ def model_setup_section():
             st.write("### 🧠 Choose Architecture:")
             model_type = st.radio(
                 "Model Type:",
-                ["Transformer (Recommended)", "RNN (Legacy, Basic)"],
+                ["Transformer Decoder-Only (Ollama Recommended)", "Transformer (Encoder-Decoder, Legacy)", "RNN (Legacy, Basic)"],
                 index=0,
-                help="Transformer uses attention (like GPT/BERT) and learns much better. RNN is kept for legacy use only."
+                help="Use Decoder-Only Transformer for Ollama-compatible GGUF models. Older modes are kept for compatibility."
             )
 
             if "RNN" in model_type:
@@ -640,8 +659,16 @@ def model_setup_section():
                                             help="Deeper = smarter. GPT-2 small uses 12 layers.")
                 ff_dim = st.number_input("Feed-forward dimension:", 128, 65536, 1024, 128,
                                         help="Set this to 4x your embedding_dim for best results.")
-                max_length = st.number_input("Max sequence length:", 10, 500, 64, 10)
-                learning_rate = st.number_input("Learning rate:", 0.0001, 0.1, 0.003, 0.0001, format="%.4f",
+                max_length = st.number_input(
+                    "Max sequence length:",
+                    10,
+                    500,
+                    128,
+                    10,
+                    help="Max positions in the decoder. Longer = more context and longer replies allowed, "
+                         "but more VRAM. With a large dataset of long answers, use at least 128–256.",
+                )
+                learning_rate = st.number_input("Learning rate:", 0.000001, 0.1, 0.003, 0.000001, format="%.6f",
                                                help="0.003 is a good starting point. Go up to 0.01 if loss barely moves. Lower to 0.001 if loss jumps around.")
 
                 st.write("**⚙️ Training Parameters**")
@@ -722,6 +749,7 @@ def model_setup_section():
                         st.error(f"Embedding dim ({embedding_dim}) must be divisible by num heads ({num_heads})!")
                         return
                     
+                    decoder_only_mode = "Decoder-Only" in model_type
                     model = TransformerChatbot(
                         vocab_size=vocab_size,
                         embed_dim=embedding_dim,
@@ -735,9 +763,10 @@ def model_setup_section():
                         scheduler=t_scheduler_key,
                         warmup_epochs=int(t_warmup_epochs),
                         dropout_rate=float(t_dropout),
-                        grad_clip=float(t_grad_clip)
+                        grad_clip=float(t_grad_clip),
+                        decoder_only=decoder_only_mode
                     )
-                    st.session_state.model_type = "Transformer"
+                    st.session_state.model_type = "TransformerDecoderOnly" if decoder_only_mode else "Transformer"
                     
                     # Calculate actual params (done in model init)
                     total_params = model._count_parameters()
@@ -761,14 +790,39 @@ def model_setup_section():
                     st.success(f"🎉 CONGRATS! You built a {total_params/1e9:.2f}B parameter model!")
 
 def training_section():
-    st.header("🎯 Train Your Chatbot")
+    st.header("Train your model")
+    st.caption(
+        "You are optimizing the **neural network weights** (the \"brain\"). The chat page is only one way to run inference."
+    )
     
     if st.session_state.chatbot_model is None:
         st.warning("Please create a model first!")
         return
-    
+
+    td = st.session_state.training_data
+    if td is None:
+        st.warning("Load training data first (Data Upload page).")
+        return
+
+    model = st.session_state.chatbot_model
+    if (
+        st.session_state.get("training_data_profile") == "sft_pack"
+        and getattr(model, "decoder_only", False)
+    ):
+        st.info(
+            "You loaded the **SFT Pack**. Turn **SFT (Supervised Fine-Tuning)** on below so training "
+            "loss applies mainly to **assistant (bot) tokens** — that is what this dataset is shaped for."
+        )
+    elif st.session_state.get("training_data_profile") == "sft_pack" and not getattr(
+        model, "decoder_only", False
+    ):
+        st.warning(
+            "The **SFT Pack** is meant for **decoder-only** models with **SFT** enabled. "
+            "Your model is encoder–decoder or not decoder-only; consider switching architecture or use full LM loss."
+        )
+
     # Data stats
-    total_pairs = len(st.session_state.training_data)
+    total_pairs = len(td)
     
     # Parquet support
     uploaded_file = st.sidebar.file_uploader("Upload Parquet Data", type=["parquet"])
@@ -828,6 +882,22 @@ def training_section():
         st.success(f"📊 {total_pairs} conversation pairs loaded. Good dataset size!")
 
     st.write("### 💡 Transformer Training Tips:")
+    with st.expander("How this compares to generic “lower loss” advice (e.g. normalize inputs, batch norm)"):
+        st.markdown(
+            """
+            **What already matches “generic ML” tips here**
+            - **Adam / AdamW / schedules / dropout / weight decay / grad clip** — available in Model Setup for Transformers.
+            - **Train longer** — still one of the biggest levers if loss is slowly decreasing.
+
+            **What is different for text token models**
+            - **“Normalize inputs”** in vision means rescale pixels. Here, inputs are **token IDs** into an **embedding table**; there is no separate per-feature z-score on tokens.
+            - **Batch Normalization** is common in CNNs; Transformers usually use **LayerNorm** inside blocks (not the same knob as “add BatchNorm layers”).
+            - **Vocabulary size ~950** usually means **only ~950 distinct word types appeared in your training strings** (capped by max vocab), not that the slider failed. Use **Pad with common English** to grow the table for rarer chat words.
+
+            **Loss scale**
+            - Random guessing over \(V\) tokens has cross-entropy about **ln(V)**. A vocab of 6k has a higher “random” floor than a vocab of 1k — **lower vocab can make loss look better** while **chat still looks dumb** if everything maps to `<UNK>`.
+            """
+        )
     st.info("""
     - **Recommended starter settings:** embed=256, heads=8, layers=4, ff=1024, LR=0.003, Optimizer=Adam, Scheduler=Warmup+Cosine
     - **Adam vs SGD:** Adam typically drops loss 4–5× faster than SGD. Use Adam unless you have a specific reason not to.
@@ -846,9 +916,21 @@ def training_section():
                                       help="GTX 1650: 32-64 | RTX 3060: 64-128 | RTX 4090: 128-256 | RTX 5090: 256-512")
     with col3:
         shuffle_data = st.checkbox("Shuffle data", value=True)
+
+    use_sft = st.checkbox(
+        "SFT (Supervised Fine-Tuning)",
+        value=False,
+        help="Decoder-only only: train loss only on the assistant (bot) reply tokens, not on "
+             "predicting the user prompt. Matches common instruction-tuning / chat SFT. "
+             "Encoder–decoder mode ignores this (loss is already on the bot sequence only).",
+        disabled=not getattr(model, "decoder_only", False),
+    )
+    if use_sft and getattr(model, "decoder_only", False):
+        st.caption("SFT on: gradients focus on learning to complete after the user segment.")
+    elif not getattr(model, "decoder_only", False):
+        st.caption("SFT applies to Decoder-Only models; your model is encoder–decoder (loss is on bot only).")
     
     # Show batch info
-    model = st.session_state.chatbot_model
     if model.gpu_available:
         st.info(f"🚀 GPU Mode: Batch size {batch_size} will process {batch_size} samples simultaneously for maximum speed!")
     else:
@@ -856,6 +938,7 @@ def training_section():
     
     progress_bar = st.progress(0)
     status_text = st.empty()
+    batch_status_text = st.empty()
     loss_chart_placeholder = st.empty()
     
     if st.button("Start Training"):
@@ -867,34 +950,61 @@ def training_section():
         # Prepare all batches first to get accurate count
         input_seqs_all = []
         target_seqs_all = []
-        
+        sft_starts_all = []
+
+        if hasattr(model, "clear_update_coverage"):
+            model.clear_update_coverage()
+
+        max_len = int(model.max_length if hasattr(model, "max_length") else model.max_seq_len)
+
         for conv in data:
-            # CRITICAL FIX: Add START and END tokens!
-            input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=True))
-            target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=True))
-            
-            max_len = model.max_length if hasattr(model, 'max_length') else model.max_seq_len
-            if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) < max_len:
+            if getattr(model, 'decoder_only', False):
+                # Decoder-only training sequence:
+                # <START> user <END> <START> bot <END>
+                user_seq = tokenizer.encode(conv['user'], add_special_tokens=True)
+                bot_seq = tokenizer.encode(conv['bot'], add_special_tokens=True)
+                full_seq = np.array(user_seq + bot_seq, dtype=np.int32)
+                input_seq = full_seq
+                target_seq = full_seq
+                # SFT: first loss timestep predicts first bot token (index len(user_seq) in full_seq)
+                sft_t = (len(user_seq) - 1) if use_sft else None
+            else:
+                # Encoder-decoder path
+                input_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=True))
+                target_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=True))
+                sft_t = None
+
+            # Decoder/encoder forward uses pos enc length max_len; target_input has len(seq)-1.
+            # Require len(seq)-1 <= max_len  =>  len(seq) <= max_len + 1 (strict '< max_len' dropped valid rows).
+            if len(input_seq) > 0 and len(target_seq) > 0 and len(target_seq) <= max_len + 1:
                 input_seqs_all.append(input_seq)
                 target_seqs_all.append(target_seq)
+                sft_starts_all.append(sft_t)
         
         # Calculate batch info
         total_samples = len(input_seqs_all)
+        skipped = len(data) - total_samples
+        if skipped > 0:
+            st.warning(
+                f"**{skipped:,}** / **{len(data):,}** conversations were skipped (too long for "
+                f"max sequence length **{max_len}**). Raise **Max sequence length** in Model Setup "
+                "or shorten replies — otherwise the model barely sees your large dataset."
+            )
         num_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
         
         # Print training info to console
         print("\n" + "="*60)
-        print("🚀 TRAINING STARTED")
+        print("TRAINING STARTED")
         print("="*60)
-        print(f"📊 Total samples: {total_samples}")
-        print(f"📦 Batch size: {batch_size}")
-        print(f"🔢 Batches per epoch: {num_batches}")
-        print(f"🔄 Total epochs: {epochs}")
-        print(f"💪 Total batches to process: {num_batches * epochs}")
+        print(f"Total samples: {total_samples}")
+        print(f"Batch size: {batch_size}")
+        print(f"Batches per epoch: {num_batches}")
+        print(f"Total epochs: {epochs}")
+        print(f"Total batches to process: {num_batches * epochs}")
         if model.gpu_available:
-            print(f"🚀 GPU Mode: ACTIVE (CuPy)")
+            print("GPU Mode: ACTIVE (CuPy)")
         else:
-            print(f"💻 CPU Mode: ACTIVE (NumPy)")
+            print("CPU Mode: ACTIVE (NumPy)")
         print("="*60 + "\n")
         
         # Training loop - removed spinner so progress bar works!
@@ -906,11 +1016,13 @@ def training_section():
                 indices = np.random.permutation(total_samples)
                 input_seqs_shuffled = [input_seqs_all[i] for i in indices]
                 target_seqs_shuffled = [target_seqs_all[i] for i in indices]
+                sft_shuffled = [sft_starts_all[i] for i in indices]
             else:
                 input_seqs_shuffled = input_seqs_all
                 target_seqs_shuffled = target_seqs_all
+                sft_shuffled = sft_starts_all
             
-            print(f"\n📍 Epoch {epoch + 1}/{epochs}")
+            print(f"\nEpoch {epoch + 1}/{epochs}")
             print("-" * 60)
             
             # Train in batches
@@ -918,14 +1030,23 @@ def training_section():
             for i in range(0, len(input_seqs_shuffled), batch_size):
                 batch_inputs = input_seqs_shuffled[i:i+batch_size]
                 batch_targets = target_seqs_shuffled[i:i+batch_size]
+                batch_sft = sft_shuffled[i:i+batch_size] if use_sft and getattr(model, "decoder_only", False) else None
                 
                 if len(batch_inputs) > 0:
                     batch_num += 1
-                    loss = model.train_batch(batch_inputs, batch_targets)
+                    if batch_sft is not None:
+                        loss = model.train_batch(
+                            batch_inputs, batch_targets, sft_loss_starts=batch_sft
+                        )
+                    else:
+                        loss = model.train_batch(batch_inputs, batch_targets)
                     epoch_losses.append(loss)
                     
                     # Print batch progress
                     print(f"  Batch {batch_num}/{num_batches} | Samples: {len(batch_inputs)} | Loss: {loss:.4f}")
+                    batch_status_text.text(
+                        f"Batch {batch_num}/{num_batches} (Epoch {epoch + 1}/{epochs}) - Batch Loss: {loss:.4f}"
+                    )
             
             avg_loss = np.mean(epoch_losses) if epoch_losses else 0
             losses.append(avg_loss)
@@ -936,7 +1057,7 @@ def training_section():
 
             # Print epoch summary
             current_lr = getattr(model, 'learning_rate', '?')
-            print(f"  ✅ Epoch {epoch + 1} complete | Avg Loss: {avg_loss:.4f} | LR: {current_lr:.6f}")
+            print(f"  Epoch {epoch + 1} complete | Avg Loss: {avg_loss:.4f} | LR: {current_lr:.6f}")
             print("-" * 60)
             
             # Update progress
@@ -954,16 +1075,27 @@ def training_section():
         
         model.training_history['loss'] = losses
         st.session_state.is_trained = True
+
+        if hasattr(model, "get_update_coverage_report"):
+            report = model.get_update_coverage_report()
+            st.write("### Parameter Update Coverage")
+            st.write(
+                f"Updated {report['updated_count']}/{report['expected_count']} expected parameter groups "
+                f"({report['coverage_percent']:.1f}%)."
+            )
+            if report["missing"]:
+                st.warning(f"Missing updates: {', '.join(report['missing'][:12])}" +
+                           (" ..." if len(report["missing"]) > 12 else ""))
         
         # Print final summary
         print("\n" + "="*60)
-        print("✅ TRAINING COMPLETE!")
+        print("TRAINING COMPLETE!")
         print("="*60)
-        print(f"📊 Total epochs completed: {epochs}")
-        print(f"📦 Total batches processed: {num_batches * epochs}")
-        print(f"📉 Final loss: {losses[-1]:.4f}")
-        print(f"📈 Starting loss: {losses[0]:.4f}")
-        print(f"💪 Loss improvement: {((losses[0] - losses[-1]) / losses[0] * 100):.1f}%")
+        print(f"Total epochs completed: {epochs}")
+        print(f"Total batches processed: {num_batches * epochs}")
+        print(f"Final loss: {losses[-1]:.4f}")
+        print(f"Starting loss: {losses[0]:.4f}")
+        print(f"Loss improvement: {((losses[0] - losses[-1]) / losses[0] * 100):.1f}%")
         print("="*60 + "\n")
         
         st.success("Training complete!")
@@ -1042,10 +1174,10 @@ def chat_interface_section():
                 # Spam detected! Increase temperature and retry
                 spam_type = "comma" if ',,,' in response_text else "dot"
                 if attempt < max_retries - 1:
-                    print(f"⚠️ {spam_type.capitalize()} spam detected (attempt {attempt + 1}), regenerating with higher temperature...")
+                    print(f"Warning: {spam_type.capitalize()} spam detected (attempt {attempt + 1}), regenerating with higher temperature...")
                     temperature = min(temperature + 0.3, 2.0)  # Increase temperature
                 else:
-                    print(f"⚠️ Still spam after {max_retries} attempts, using last response")
+                    print(f"Warning: Still spam after {max_retries} attempts, using last response")
         
         # Add bot response to history
         st.session_state.chat_history.append({'role': 'bot', 'content': response_text})
@@ -1118,7 +1250,10 @@ def export_model_section():
         if is_rnn:
             st.caption("GGUF binary for archiving/llama.cpp tooling (RNN archive format).")
         else:
-            st.caption("Ollama-compatible GGUF — exported as `llama` architecture with embedded vocabulary.")
+            if getattr(model, 'decoder_only', False):
+                st.caption("Ollama-compatible GGUF — decoder-only `llama` architecture with embedded vocabulary.")
+            else:
+                st.caption("Best-effort GGUF export from encoder-decoder Transformer. For stable Ollama runtime, train Decoder-Only mode.")
             st.info("✅ This GGUF can be loaded directly by Ollama using the Modelfile below.", icon="✅")
 
         if st.button("Prepare Model (.gguf)", key="export_gguf_btn"):
@@ -1131,6 +1266,9 @@ def export_model_section():
                     else:
                         if tokenizer is None:
                             st.error("Tokenizer not found in session. Please train a model first.")
+                            return
+                        if not getattr(model, 'decoder_only', False):
+                            st.error("For reliable Ollama runtime, export only Decoder-Only Transformer models.")
                             return
                         gguf_bytes = export_transformer_to_gguf(model, tokenizer, model_name)
                 st.session_state.gguf_bytes = gguf_bytes
@@ -1302,8 +1440,9 @@ TEMPLATE \"\"\"{{{{ .Prompt }}}}\"\"\"
             "Trained": "Yes" if st.session_state.is_trained else "No",
         }
     else:
+        transformer_mode = "Decoder-Only (Ollama-ready)" if getattr(model, 'decoder_only', False) else "Encoder-Decoder"
         info = {
-            "Model Type": "Transformer (Multi-Head Attention)",
+            "Model Type": f"Transformer ({transformer_mode})",
             "Model Name": model_name,
             "Vocabulary Size": model.vocab_size,
             "Embedding Dimension": model.embed_dim,

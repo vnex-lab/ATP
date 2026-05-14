@@ -1,7 +1,7 @@
 import re
 import json
 import pickle
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from collections import Counter
 
 class ChatbotTokenizer:
@@ -28,31 +28,56 @@ class ChatbotTokenizer:
         tokens = text.strip().split()
         return tokens
     
-    def build_vocabulary(self, texts: List[str]):
+    def build_vocabulary(
+        self,
+        texts: List[str],
+        pad_with_words: Optional[List[str]] = None,
+        pad_until: int = 0,
+    ):
         """
-        Build vocabulary from list of texts
-        
+        Build vocabulary from list of texts (word-level, lowercased).
+
         Args:
-            texts: List of text strings
+            texts: Raw strings (e.g. all user + bot messages).
+            pad_with_words: Optional list of extra tokens (e.g. common English) to add
+                after corpus tokens so small corpora do not collapse to ~1k types.
+            pad_until: If > 0, keep appending tokens from pad_with_words until vocab
+                reaches this size or max_vocab_size (whichever comes first). Ignored
+                if pad_with_words is empty.
         """
+        # Fresh build (safe if this instance is reused)
+        self.word2idx = {'<PAD>': 0, '<START>': 1, '<END>': 2, '<UNK>': 3}
+        self.idx2word = {0: '<PAD>', 1: '<START>', 2: '<END>', 3: '<UNK>'}
+        self.vocab_size = 4
+
         all_tokens = []
         for text in texts:
             all_tokens.extend(self.tokenize(text))
-        
-        # Count token frequencies
+
         token_counts = Counter(all_tokens)
-        
-        # Get most common tokens
-        most_common = token_counts.most_common(self.max_vocab_size - 4)  # -4 for special tokens
-        
-        # Add to vocabulary
+        most_common = token_counts.most_common(self.max_vocab_size - 4)
+
         for token, _ in most_common:
             if token not in self.word2idx:
                 idx = len(self.word2idx)
                 self.word2idx[token] = idx
                 self.idx2word[idx] = token
-        
+
         self.vocab_size = len(self.word2idx)
+
+        if pad_with_words and pad_until > 0:
+            target = min(pad_until, self.max_vocab_size)
+            for w in pad_with_words:
+                if self.vocab_size >= self.max_vocab_size:
+                    break
+                if self.vocab_size >= target:
+                    break
+                if not w or w in self.word2idx:
+                    continue
+                idx = len(self.word2idx)
+                self.word2idx[w] = idx
+                self.idx2word[idx] = w
+                self.vocab_size = len(self.word2idx)
     
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
         """
