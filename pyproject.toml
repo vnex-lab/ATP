@@ -5,12 +5,16 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "cupy-cuda12x>=13.6.0",
+    "fastapi>=0.136.1",
     "matplotlib>=3.10.7",
     "numpy>=2.3.3",
     "pandas>=2.3.3",
     "plotly>=6.3.1",
     "pyarrow>=21.0.0",
+    "pydantic>=2.13.4",
+    "python-multipart>=0.0.28",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "streamlit>=1.50.0",
+    "uvicorn>=0.46.0",
 ]
