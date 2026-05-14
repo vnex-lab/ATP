@@ -1,4 +1,4 @@
-export type Page = 'data' | 'model' | 'train' | 'chat' | 'export'
+export type Page = 'data' | 'model' | 'pretrain' | 'train' | 'chat' | 'export'
 
 export interface TrainingPair {
   user: string
@@ -15,9 +15,16 @@ export interface TrainingState {
   current_loss: number
   avg_loss: number
   losses: number[]
+  val_losses: number[]
   status: 'idle' | 'training' | 'done' | 'error'
   error: string | null
   gpu_available: boolean
+}
+
+export interface PretrainStatus {
+  loaded: boolean
+  count: number
+  persisted: boolean
 }
 
 export interface AppStatus {

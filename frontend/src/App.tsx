@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import DataPage from './pages/DataPage'
 import ModelPage from './pages/ModelPage'
+import PretrainPage from './pages/PretrainPage'
 import TrainPage from './pages/TrainPage'
 import ChatPage from './pages/ChatPage'
 import ExportPage from './pages/ExportPage'
@@ -29,6 +30,7 @@ const DEFAULT_STATUS: AppStatus = {
     current_loss: 0,
     avg_loss: 0,
     losses: [],
+    val_losses: [],
     status: 'idle',
     error: null,
     gpu_available: false,
@@ -57,11 +59,12 @@ export default function App() {
       <Sidebar page={page} setPage={setPage} status={status} />
       <main className="flex-1 overflow-y-auto">
         <div className="fade-in h-full">
-          {page === 'data'   && <DataPage  status={status} onRefresh={refreshStatus} />}
-          {page === 'model'  && <ModelPage status={status} onRefresh={refreshStatus} />}
-          {page === 'train'  && <TrainPage status={status} onRefresh={refreshStatus} />}
-          {page === 'chat'   && <ChatPage  status={status} onRefresh={refreshStatus} />}
-          {page === 'export' && <ExportPage status={status} onRefresh={refreshStatus} />}
+          {page === 'data'     && <DataPage    status={status} onRefresh={refreshStatus} />}
+          {page === 'model'    && <ModelPage   status={status} onRefresh={refreshStatus} />}
+          {page === 'pretrain' && <PretrainPage status={status} onRefresh={refreshStatus} />}
+          {page === 'train'    && <TrainPage   status={status} onRefresh={refreshStatus} />}
+          {page === 'chat'     && <ChatPage    status={status} onRefresh={refreshStatus} />}
+          {page === 'export'   && <ExportPage  status={status} onRefresh={refreshStatus} />}
         </div>
       </main>
     </div>

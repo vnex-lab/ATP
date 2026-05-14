@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import type { AppStatus, TrainingState } from '../types'
 import { startTraining, subscribeToTraining } from '../api'
 import PageShell from '../components/PageShell'
@@ -12,6 +12,7 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
   const [batchSize, setBatchSize] = useState(16)
   const [shuffle, setShuffle] = useState(true)
   const [useSft, setUseSft] = useState(false)
+  const [usePretrain, setUsePretrain] = useState(false)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
   const [trainingData, setTrainingData] = useState<TrainingState>(status.training)
@@ -35,7 +36,7 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
     setMsg(null)
     setLoading(true)
     try {
-      await startTraining({ epochs, batch_size: batchSize, shuffle_data: shuffle, use_sft: useSft })
+      await startTraining({ epochs, batch_size: batchSize, shuffle_data: shuffle, use_sft: useSft, use_pretrain: usePretrain })
       const unsub = subscribeToTraining(
         (data) => setTrainingData(data as TrainingState),
         () => { setLoading(false); onRefresh() }
@@ -52,8 +53,13 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
   const isTraining = td.is_training
   const isDone = td.status === 'done'
   const isError = td.status === 'error'
+  const hasVal = (td.val_losses?.length ?? 0) > 0 && (td.val_losses?.[0] ?? 0) > 0
 
-  const chartData = td.losses.map((loss, i) => ({ epoch: i + 1, loss: Number(loss.toFixed(4)) }))
+  const chartData = td.losses.map((loss, i) => ({
+    epoch: i + 1,
+    train: Number(loss.toFixed(4)),
+    ...(hasVal && td.val_losses[i] != null ? { val: Number(td.val_losses[i].toFixed(4)) } : {}),
+  }))
 
   return (
     <PageShell
@@ -87,6 +93,14 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
                   style={{ accentColor: '#3b82f6', width: 14, height: 14 }} />
                 <span style={{ fontSize: 13, color: '#94a3b8' }}>Shuffle data</span>
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input type="checkbox" checked={usePretrain} onChange={(e) => setUsePretrain(e.target.checked)} disabled={isTraining}
+                  style={{ accentColor: '#6366f1', width: 14, height: 14 }} />
+                <span style={{ fontSize: 13, color: '#94a3b8' }}>
+                  Use Pre-train Data
+                  <span style={{ color: '#475569', fontSize: 11, marginLeft: 4 }}>(from Pre-train page)</span>
+                </span>
+              </label>
               {isDecoderOnly && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input type="checkbox" checked={useSft} onChange={(e) => setUseSft(e.target.checked)} disabled={isTraining}
@@ -103,9 +117,10 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
           <div style={{ fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Quick Tips</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {[
+              'Small custom dataset? Enable Pre-train Data to add 250+ language-foundation pairs first.',
               'Loss stuck? Try a higher LR (0.005–0.01) in Model Setup.',
               'Loss bouncing? Lower LR or increase Gradient Clip.',
-              'Word salad after 100 epochs? You need more training data.',
+              'Val loss rises while train falls? The model is overfitting — reduce epochs or add more data.',
               'GPU active = much faster training per epoch.',
             ].map((t) => (
               <div key={t} style={{ fontSize: 12, color: '#475569' }}>· {t}</div>
@@ -136,7 +151,10 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
                 <StatChip label="Mode" value="GPU" />
               )}
               {td.current_epoch > 0 && (
-                <StatChip label="Loss" value={td.avg_loss.toFixed(4)} />
+                <StatChip label="Train Loss" value={td.avg_loss.toFixed(4)} />
+              )}
+              {hasVal && td.current_epoch > 0 && (
+                <StatChip label="Val Loss" value={(td.val_losses[td.val_losses.length - 1] ?? 0).toFixed(4)} color="#f59e0b" />
               )}
             </div>
           </div>
@@ -167,37 +185,65 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
 
           {/* Chart */}
           {chartData.length > 1 && (
-            <div style={{ height: 220 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />
-                  <XAxis
-                    dataKey="epoch"
-                    stroke="#374151"
-                    tick={{ fill: '#475569', fontSize: 11 }}
-                    label={{ value: 'Epoch', position: 'insideBottom', offset: -2, fill: '#475569', fontSize: 11 }}
-                  />
-                  <YAxis
-                    stroke="#374151"
-                    tick={{ fill: '#475569', fontSize: 11 }}
-                    label={{ value: 'Loss', angle: -90, position: 'insideLeft', fill: '#475569', fontSize: 11 }}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: '#1c1c1c', border: '1px solid #252525', borderRadius: 7, fontSize: 12 }}
-                    labelStyle={{ color: '#94a3b8' }}
-                    itemStyle={{ color: '#3b82f6' }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="loss"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    dot={chartData.length < 30 ? { fill: '#3b82f6', r: 3 } : false}
-                    activeDot={{ r: 5, fill: '#60a5fa' }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <>
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ width: 20, height: 2, background: '#3b82f6', borderRadius: 1 }} />
+                  <span style={{ fontSize: 11, color: '#94a3b8' }}>Train loss</span>
+                </div>
+                {hasVal && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ width: 20, height: 2, background: '#f59e0b', borderRadius: 1, borderTop: '2px dashed #f59e0b' }} />
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>Val loss</span>
+                  </div>
+                )}
+              </div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />
+                    <XAxis
+                      dataKey="epoch"
+                      stroke="#374151"
+                      tick={{ fill: '#475569', fontSize: 11 }}
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -2, fill: '#475569', fontSize: 11 }}
+                    />
+                    <YAxis
+                      stroke="#374151"
+                      tick={{ fill: '#475569', fontSize: 11 }}
+                      label={{ value: 'Loss', angle: -90, position: 'insideLeft', fill: '#475569', fontSize: 11 }}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: '#1c1c1c', border: '1px solid #252525', borderRadius: 7, fontSize: 12 }}
+                      labelStyle={{ color: '#94a3b8' }}
+                      itemStyle={{ color: '#e2e8f0' }}
+                      formatter={(val: number, name: string) => [val.toFixed(4), name === 'train' ? 'Train loss' : 'Val loss']}
+                      labelFormatter={(l) => `Epoch ${l}`}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="train"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      dot={chartData.length < 30 ? { fill: '#3b82f6', r: 3 } : false}
+                      activeDot={{ r: 5, fill: '#60a5fa' }}
+                    />
+                    {hasVal && (
+                      <Line
+                        type="monotone"
+                        dataKey="val"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        strokeDasharray="5 3"
+                        dot={false}
+                        activeDot={{ r: 5, fill: '#fbbf24' }}
+                      />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </>
           )}
 
           {isDone && td.losses.length > 0 && (
@@ -207,6 +253,9 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
               <StatChip label="Improvement"
                 value={`${(((td.losses[0] - td.losses[td.losses.length - 1]) / td.losses[0]) * 100).toFixed(1)}%`}
               />
+              {hasVal && td.val_losses.length > 0 && (
+                <StatChip label="Final Val Loss" value={td.val_losses[td.val_losses.length - 1].toFixed(4)} color="#f59e0b" />
+              )}
               <StatChip label="Epochs" value={td.total_epochs.toString()} />
             </div>
           )}
@@ -224,7 +273,7 @@ export default function TrainPage({ status, onRefresh }: { status: AppStatus; on
           </div>
           {status.training_data_count < 500 && (
             <div style={{ marginTop: 10, color: '#f59e0b', fontSize: 12 }}>
-              Small dataset ({status.training_data_count} pairs). Aim for 1,000+ for better results.
+              Small dataset ({status.training_data_count} pairs). Enable Pre-train Data or aim for 1,000+ pairs for better results.
             </div>
           )}
         </Card>
@@ -255,11 +304,11 @@ function NumInput({ value, onChange, min, max, step, disabled }: {
   )
 }
 
-function StatChip({ label, value }: { label: string; value: string }) {
+function StatChip({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div style={{ background: '#111', borderRadius: 6, padding: '5px 10px', border: '1px solid #1e1e1e' }}>
       <span style={{ fontSize: 11, color: '#475569' }}>{label}: </span>
-      <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}>{value}</span>
+      <span style={{ fontSize: 12, color: color ?? '#e2e8f0', fontWeight: 500 }}>{value}</span>
     </div>
   )
 }
@@ -267,9 +316,9 @@ function StatChip({ label, value }: { label: string; value: string }) {
 function Alert({ type, text }: { type: 'success' | 'error' | 'info' | 'warn'; text: string }) {
   const colors = {
     success: { bg: '#14532d22', border: '#166534', text: '#86efac' },
-    error: { bg: '#450a0a', border: '#7f1d1d', text: '#fca5a5' },
-    info: { bg: '#1e3a5f22', border: '#1e40af', text: '#93c5fd' },
-    warn: { bg: '#451a0322', border: '#92400e', text: '#fcd34d' },
+    error:   { bg: '#450a0a',   border: '#7f1d1d', text: '#fca5a5' },
+    info:    { bg: '#1e3a5f22', border: '#1e40af', text: '#93c5fd' },
+    warn:    { bg: '#451a0322', border: '#92400e', text: '#fcd34d' },
   }
   const c = colors[type]
   return (

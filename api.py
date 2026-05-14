@@ -20,7 +20,9 @@ from chatbot_model import VnexAIChatbot
 from transformer_model import TransformerChatbot
 from chatbot_tokenizer import ChatbotTokenizer
 
-app = FastAPI(title="VnexAI API")
+PRETRAIN_FILE = os.path.join(os.path.dirname(__file__), "pretrain_data.json")
+
+app = FastAPI(title="LLM Vite API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +37,7 @@ state: Dict[str, Any] = {
     "model": None,
     "tokenizer": None,
     "training_data": None,
+    "pretrain_data": None,
     "is_trained": False,
     "chat_history": [],
     "model_bytes": None,
@@ -55,11 +58,68 @@ training_state: Dict[str, Any] = {
     "current_loss": 0.0,
     "avg_loss": 0.0,
     "losses": [],
+    "val_losses": [],
     "status": "idle",
     "error": None,
     "gpu_available": False,
 }
 training_lock = threading.Lock()
+
+
+# ─── Pretrain persistence ───────────────────────────────────────────────────────
+def _load_pretrain_from_disk():
+    if os.path.exists(PRETRAIN_FILE):
+        try:
+            with open(PRETRAIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and data:
+                state["pretrain_data"] = data
+        except Exception:
+            pass
+
+_load_pretrain_from_disk()
+
+
+def _save_pretrain_to_disk(data: List[Dict]):
+    with open(PRETRAIN_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _delete_pretrain_from_disk():
+    if os.path.exists(PRETRAIN_FILE):
+        os.remove(PRETRAIN_FILE)
+
+
+# ─── Validation loss helper ─────────────────────────────────────────────────────
+def compute_val_loss(model, val_inp, val_tgt, batch_size=32, use_sft=False, val_sft=None):
+    """Compute validation loss without permanently updating model weights.
+
+    We pickle the model's __dict__, run train_batch (which returns the correct
+    pre-update loss), then restore the original weights.
+    """
+    if not val_inp:
+        return 0.0
+    try:
+        saved_state = pickle.dumps(model.__dict__)
+    except Exception:
+        return 0.0
+    val_losses = []
+    try:
+        for i in range(0, len(val_inp), batch_size):
+            bi = val_inp[i:i + batch_size]
+            bt = val_tgt[i:i + batch_size]
+            if use_sft and val_sft is not None:
+                bs = val_sft[i:i + batch_size]
+                loss = model.train_batch(bi, bt, sft_loss_starts=bs)
+            else:
+                loss = model.train_batch(bi, bt)
+            val_losses.append(float(loss))
+    finally:
+        try:
+            model.__dict__.update(pickle.loads(saved_state))
+        except Exception:
+            pass
+    return float(np.mean(val_losses)) if val_losses else 0.0
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -235,66 +295,91 @@ def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
 
 
 # ─── Training thread ───────────────────────────────────────────────────────────
-def run_training_thread(model, tokenizer, data, config):
-    epochs = config["epochs"]
+def _encode_pairs(pairs, tokenizer, model, max_len):
+    """Encode a list of {user, bot} pairs into (input_seqs, target_seqs, sft_starts)."""
+    input_seqs, target_seqs, sft_starts = [], [], []
+    decoder_only = getattr(model, 'decoder_only', False)
+    for conv in pairs:
+        if decoder_only:
+            user_seq = tokenizer.encode(conv['user'], add_special_tokens=True)
+            bot_seq  = tokenizer.encode(conv['bot'],  add_special_tokens=True)
+            full_seq = np.array(user_seq + bot_seq, dtype=np.int32)[:max_len]
+            if len(full_seq) < 2:
+                continue
+            input_seqs.append(full_seq[:-1])
+            target_seqs.append(full_seq[1:])
+            sft_start = min(len(user_seq) - 1, len(full_seq) - 2)
+            sft_starts.append(max(0, sft_start))
+        else:
+            user_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=True), dtype=np.int32)[:max_len]
+            bot_seq  = np.array(tokenizer.encode(conv['bot'],  add_special_tokens=True), dtype=np.int32)[:max_len]
+            if len(user_seq) > 1 and len(bot_seq) > 1:
+                input_seqs.append(user_seq)
+                target_seqs.append(bot_seq)
+                sft_starts.append(0)
+    return input_seqs, target_seqs, sft_starts
+
+
+def run_training_thread(model, tokenizer, data, config, pretrain_data=None):
+    epochs     = config["epochs"]
     batch_size = config["batch_size"]
-    shuffle = config.get("shuffle_data", True)
-    use_sft = config.get("use_sft", False)
-    max_len = int(model.max_length if hasattr(model, "max_length") else model.max_seq_len)
+    shuffle    = config.get("shuffle_data", True)
+    use_sft    = config.get("use_sft", False)
+    use_pretrain = config.get("use_pretrain", False)
+    val_split  = config.get("val_split", 0.1)       # fraction held out for validation
+    max_len    = int(model.max_length if hasattr(model, "max_length") else model.max_seq_len)
 
     with training_lock:
-        training_state["status"] = "training"
-        training_state["is_training"] = True
-        training_state["progress"] = 0.0
-        training_state["losses"] = []
+        training_state["status"]       = "training"
+        training_state["is_training"]  = True
+        training_state["progress"]     = 0.0
+        training_state["losses"]       = []
+        training_state["val_losses"]   = []
         training_state["current_epoch"] = 0
         training_state["total_epochs"] = epochs
-        training_state["error"] = None
+        training_state["error"]        = None
         training_state["gpu_available"] = bool(getattr(model, "gpu_available", False))
 
     try:
-        input_seqs_all = []
-        target_seqs_all = []
-        sft_starts_all = []
-
         if hasattr(model, "clear_update_coverage"):
             model.clear_update_coverage()
 
-        for conv in data:
-            if getattr(model, 'decoder_only', False):
-                user_seq = tokenizer.encode(conv['user'], add_special_tokens=True)
-                bot_seq = tokenizer.encode(conv['bot'], add_special_tokens=True)
-                full_seq = np.array(user_seq + bot_seq, dtype=np.int32)[:max_len]
-                if len(full_seq) < 2:
-                    continue
-                input_seqs_all.append(full_seq[:-1])
-                target_seqs_all.append(full_seq[1:])
-                sft_start = min(len(user_seq) - 1, len(full_seq) - 2)
-                sft_starts_all.append(max(0, sft_start))
-            else:
-                user_seq = np.array(tokenizer.encode(conv['user'], add_special_tokens=True), dtype=np.int32)[:max_len]
-                bot_seq = np.array(tokenizer.encode(conv['bot'], add_special_tokens=True), dtype=np.int32)[:max_len]
-                if len(user_seq) > 1 and len(bot_seq) > 1:
-                    input_seqs_all.append(user_seq)
-                    target_seqs_all.append(bot_seq)
-                    sft_starts_all.append(0)
+        # ── Combine pretrain + fine-tune data ──────────────────────────────
+        combined = list(data)
+        if use_pretrain and pretrain_data:
+            combined = list(pretrain_data) + combined
 
-        total_samples = len(input_seqs_all)
-        num_batches = max(1, (total_samples + batch_size - 1) // batch_size)
+        # ── Train / val split ──────────────────────────────────────────────
+        n_val = max(1, int(len(combined) * val_split)) if len(combined) >= 10 else 0
+        if n_val:
+            np.random.shuffle(combined)
+            val_data   = combined[:n_val]
+            train_data = combined[n_val:]
+        else:
+            train_data = combined
+            val_data   = []
+
+        # ── Encode ────────────────────────────────────────────────────────
+        inp_all, tgt_all, sft_all = _encode_pairs(train_data, tokenizer, model, max_len)
+        val_inp, val_tgt, val_sft = _encode_pairs(val_data,   tokenizer, model, max_len)
+
+        total_samples = len(inp_all)
+        num_batches   = max(1, (total_samples + batch_size - 1) // batch_size)
 
         with training_lock:
             training_state["total_batches"] = num_batches
 
-        losses = []
+        losses, val_losses = [], []
+
         for epoch in range(epochs):
             epoch_losses = []
             if shuffle:
                 indices = np.random.permutation(total_samples)
-                inp = [input_seqs_all[i] for i in indices]
-                tgt = [target_seqs_all[i] for i in indices]
-                sft = [sft_starts_all[i] for i in indices]
+                inp = [inp_all[i] for i in indices]
+                tgt = [tgt_all[i] for i in indices]
+                sft = [sft_all[i] for i in indices]
             else:
-                inp, tgt, sft = input_seqs_all, target_seqs_all, sft_starts_all
+                inp, tgt, sft = inp_all, tgt_all, sft_all
 
             batch_num = 0
             for i in range(0, len(inp), batch_size):
@@ -304,41 +389,49 @@ def run_training_thread(model, tokenizer, data, config):
                 if not bi:
                     continue
                 batch_num += 1
-                if bs is not None:
-                    loss = model.train_batch(bi, bt, sft_loss_starts=bs)
-                else:
-                    loss = model.train_batch(bi, bt)
+                loss = model.train_batch(bi, bt, sft_loss_starts=bs) if bs is not None else model.train_batch(bi, bt)
                 epoch_losses.append(float(loss))
                 with training_lock:
                     training_state["current_batch"] = batch_num
-                    training_state["current_loss"] = float(loss)
+                    training_state["current_loss"]  = float(loss)
 
             avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
             losses.append(avg_loss)
 
+            # ── Validation loss (every epoch; only costs a pickle round-trip) ──
+            avg_val = 0.0
+            if val_inp:
+                avg_val = compute_val_loss(
+                    model, val_inp, val_tgt,
+                    batch_size=batch_size,
+                    use_sft=use_sft and getattr(model, "decoder_only", False),
+                    val_sft=val_sft if (use_sft and getattr(model, "decoder_only", False)) else None,
+                )
+            val_losses.append(avg_val)
+
             if hasattr(model, 'step_lr'):
                 model.step_lr(total_epochs=epochs)
 
-            current_lr = float(getattr(model, 'learning_rate', 0.0))
             with training_lock:
                 training_state["current_epoch"] = epoch + 1
-                training_state["progress"] = (epoch + 1) / epochs
-                training_state["avg_loss"] = avg_loss
-                training_state["losses"] = losses[:]
+                training_state["progress"]      = (epoch + 1) / epochs
+                training_state["avg_loss"]      = avg_loss
+                training_state["losses"]        = losses[:]
+                training_state["val_losses"]    = val_losses[:]
 
         model.training_history['loss'] = losses
         state["is_trained"] = True
 
         with training_lock:
             training_state["is_training"] = False
-            training_state["status"] = "done"
-            training_state["progress"] = 1.0
+            training_state["status"]      = "done"
+            training_state["progress"]    = 1.0
 
     except Exception as e:
         with training_lock:
             training_state["is_training"] = False
-            training_state["status"] = "error"
-            training_state["error"] = str(e)
+            training_state["status"]      = "error"
+            training_state["error"]       = str(e)
 
 
 # ─── Routes: status ────────────────────────────────────────────────────────────
@@ -545,7 +638,7 @@ async def start_training(request: Request):
             raise HTTPException(status_code=409, detail="Training already in progress.")
     t = threading.Thread(
         target=run_training_thread,
-        args=(state["model"], state["tokenizer"], state["training_data"], body),
+        args=(state["model"], state["tokenizer"], state["training_data"], body, state["pretrain_data"]),
         daemon=True,
     )
     t.start()
@@ -555,12 +648,12 @@ async def start_training(request: Request):
 @app.get("/api/training/stream")
 async def training_stream():
     async def event_generator():
-        last_epoch = -1
         consecutive_idle = 0
         while True:
             with training_lock:
                 snap = dict(training_state)
-                snap["losses"] = list(training_state["losses"])
+                snap["losses"]     = list(training_state["losses"])
+                snap["val_losses"] = list(training_state["val_losses"])
             yield f"data: {json.dumps(snap)}\n\n"
             if snap["status"] in ("done", "error"):
                 break
@@ -579,8 +672,38 @@ async def training_stream():
 async def training_status():
     with training_lock:
         snap = dict(training_state)
-        snap["losses"] = list(training_state["losses"])
+        snap["losses"]     = list(training_state["losses"])
+        snap["val_losses"] = list(training_state["val_losses"])
     return snap
+
+
+# ─── Routes: pretrain ──────────────────────────────────────────────────────────
+@app.get("/api/pretrain/status")
+async def pretrain_status():
+    data = state["pretrain_data"]
+    return {
+        "loaded": data is not None,
+        "count": len(data) if data else 0,
+        "persisted": os.path.exists(PRETRAIN_FILE),
+    }
+
+
+@app.post("/api/pretrain/load")
+async def pretrain_load():
+    """Load the built-in pre-training conversational dataset and save to disk."""
+    from builtin_pretrain_dataset import get_pretrain_pairs
+    pairs = get_pretrain_pairs()
+    state["pretrain_data"] = pairs
+    _save_pretrain_to_disk(pairs)
+    return {"count": len(pairs), "message": f"Loaded {len(pairs)} pre-training pairs and saved to disk."}
+
+
+@app.delete("/api/pretrain")
+async def pretrain_delete():
+    """Delete the pre-training dataset from memory and disk."""
+    state["pretrain_data"] = None
+    _delete_pretrain_from_disk()
+    return {"message": "Pre-training data deleted."}
 
 
 # ─── Routes: chat ──────────────────────────────────────────────────────────────

@@ -51,6 +51,11 @@ export const buildVocab = (opts: {
 export const createModel = (config: Record<string, unknown>) =>
   req('/model/create', json('POST', config))
 
+// ── Pretrain ─────────────────────────────────────────────────────────────────
+export const getPretrainStatus = () => req<import('./types').PretrainStatus>('/pretrain/status')
+export const loadPretrain = () => req('/pretrain/load', { method: 'POST' })
+export const deletePretrain = () => req('/pretrain', { method: 'DELETE' })
+
 // ── Training ─────────────────────────────────────────────────────────────────
 export const startTraining = (config: Record<string, unknown>) =>
   req('/training/start', json('POST', config))
