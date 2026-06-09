@@ -823,7 +823,17 @@ class TransformerChatbot:
         # === UPDATE EMBEDDINGS (use optimizer) ===
         self._opt_update(self.embedding, d_embed, 'embedding')
     
-    def generate(self, input_text, tokenizer, max_length=50, temperature=1.0):
+    def generate(self, input_text, tokenizer, max_length=50, temperature=1.0,
+                 top_k=40, top_p=0.92, repetition_penalty=1.25):
+        """
+        Generate a response with top-k + nucleus (top-p) sampling and repetition penalty.
+
+        top_k:              only sample from the k highest-probability tokens (0 = disabled)
+        top_p:              nucleus sampling — keep the smallest set of tokens whose
+                            cumulative probability >= top_p (1.0 = disabled)
+        repetition_penalty: multiply logits of already-seen tokens by 1/penalty, making
+                            the model less likely to repeat itself (1.0 = disabled)
+        """
         self.training = False   # disable dropout during inference
         input_tokens = tokenizer.encode(input_text)
         input_seq = self.xp.array(input_tokens).reshape(1, -1)
@@ -834,31 +844,81 @@ class TransformerChatbot:
         else:
             encoder_output = self.encode(input_seq)
             generated = [tokenizer.word2idx['<START>']]
-        
+
         for _ in range(max_length):
-            # Cap to max_seq_len so positional encoding never overflows
             window = generated[-self.max_seq_len:]
             target_seq = self.xp.array(window).reshape(1, -1)
             decoder_output = self.decode(target_seq, encoder_output)
-            
+
             logits = self.xp.dot(decoder_output[:, -1:, :], self.output_weights) + self.output_bias
             logits = logits.reshape(-1)
-            
+
             if self.gpu_available:
                 logits = cp.asnumpy(logits)
-            
-            probs = np.exp(logits / temperature)
-            probs = probs / np.sum(probs)
-            
+            logits = logits.astype(np.float64)
+
+            # ── repetition penalty ──────────────────────────────────────
+            if repetition_penalty != 1.0:
+                seen = set(generated)
+                for tok_id in seen:
+                    if 0 <= tok_id < len(logits):
+                        if logits[tok_id] > 0:
+                            logits[tok_id] /= repetition_penalty
+                        else:
+                            logits[tok_id] *= repetition_penalty
+
+            # ── punctuation dampening ───────────────────────────────────
+            # Prevent !, ., , from dominating — penalise them heavily when
+            # the last generated token was already punctuation.
+            _PUNCT = set()
+            for _p in ('!', '.', ',', '?', '...', '!!', '!!!', '!!!!'):
+                if _p in tokenizer.word2idx:
+                    _PUNCT.add(tokenizer.word2idx[_p])
+            if generated and tokenizer.word2idx.get(tokenizer.idx2word.get(generated[-1], ''), -1) in _PUNCT:
+                # last token was punctuation — heavily suppress all punctuation now
+                for _pid in _PUNCT:
+                    if 0 <= _pid < len(logits):
+                        logits[_pid] -= 5.0   # subtract in log-space before softmax
+            else:
+                # even when last token was not punctuation, lightly dampen punct
+                for _pid in _PUNCT:
+                    if 0 <= _pid < len(logits):
+                        logits[_pid] -= 1.5
+
+            # ── temperature ─────────────────────────────────────────────
+            logits /= max(temperature, 1e-8)
+
+            # ── top-k ───────────────────────────────────────────────────
+            if top_k > 0 and top_k < len(logits):
+                kth_val = np.partition(logits, -top_k)[-top_k]
+                logits[logits < kth_val] = -1e10
+
+            # ── softmax ─────────────────────────────────────────────────
+            logits -= np.max(logits)
+            probs = np.exp(logits)
+            probs /= probs.sum()
+
+            # ── top-p (nucleus) ─────────────────────────────────────────
+            if top_p < 1.0:
+                sorted_idx = np.argsort(probs)[::-1]
+                cumsum = np.cumsum(probs[sorted_idx])
+                # Find first index where cumulative prob exceeds top_p
+                cutoff = np.searchsorted(cumsum, top_p) + 1
+                cutoff = max(cutoff, 1)
+                nucleus = sorted_idx[:cutoff]
+                mask = np.zeros_like(probs)
+                mask[nucleus] = probs[nucleus]
+                if mask.sum() > 0:
+                    probs = mask / mask.sum()
+
             next_token = np.random.choice(len(probs), p=probs)
-            
-            # Don't allow <END> too early (min 2 content tokens after <START>)
+
             if next_token == tokenizer.word2idx['<END>'] and len(generated) > 2:
                 break
-            
+
             if next_token != tokenizer.word2idx['<END>']:
                 generated.append(next_token)
-        
+
         self.training = True    # restore training mode
         if self.decoder_only:
             continuation = generated[len(input_tokens):]

@@ -256,14 +256,19 @@ def _collect_transformer_tensors_llama(model) -> list:
         tensors.append((f"blk.{i}.ffn_norm.weight",
                         _to_f32_np(layer['ln2_gamma']).flatten()))
 
-    # Ollama expects output.weight here as [embed_dim, vocab_size].
-    # Our tensor is already [embed_dim, vocab_size], so keep as-is.
+    # output.weight: llama.cpp expects [vocab_size, embed_dim] (it does output = x @ W.T)
+    # Our model stores [embed_dim, vocab_size], so we must transpose.
     tensors.append(("output.weight",
-                    _to_f32_np(model.output_weights)))
+                    _to_f32_np(model.output_weights).T))
 
-    # Final norm — use last decoder block's ln2 gamma, or ones if none
+    # Final norm — use last decoder block's ln3 gamma if present, else ln2, else ones
     if num_dec > 0:
-        final_norm = _to_f32_np(model.decoder_layers[-1]['ln2_gamma']).flatten()
+        last = model.decoder_layers[-1]
+        final_norm_arr = last.get('ln3_gamma', last.get('ln2_gamma', None))
+        if final_norm_arr is not None:
+            final_norm = _to_f32_np(final_norm_arr).flatten()
+        else:
+            final_norm = np.ones(model.embed_dim, dtype=np.float32)
     else:
         final_norm = np.ones(model.embed_dim, dtype=np.float32)
     tensors.append(("output_norm.weight", final_norm))
@@ -305,7 +310,15 @@ def _transformer_metadata_llama(model, tokenizer, model_name: str) -> list:
     vocab_list = []
     for idx in range(vocab_size):
         token = tokenizer.idx2word.get(idx, "<UNK>")
-        vocab_list.append(token)
+        # Special tokens stay as-is; regular words get a leading space so that
+        # llama.cpp reconstructs "hello world" instead of "helloworld" when it
+        # concatenates adjacent tokens.  We use the "none" tokenizer model
+        # below so llama.cpp treats each entry as a literal string — the space
+        # prefix is the only thing that adds word boundaries.
+        if token in ("<PAD>", "<START>", "<END>", "<UNK>"):
+            vocab_list.append(token)
+        else:
+            vocab_list.append(" " + token)  # leading space = word boundary
 
     # Token scores — llama expects one float per token (0.0 is fine for us)
     token_scores = [0.0] * vocab_size
@@ -339,10 +352,12 @@ def _transformer_metadata_llama(model, tokenizer, model_name: str) -> list:
         ("llama.vocab_size",                  GGUF_TYPE_UINT32,  int(vocab_size)),
 
         # ── tokenizer ─────────────────────────────────────────────────────
-        # Our tokenizer is a flat word/BPE-like table, not a sentencepiece model.
-        # Using "llama" routes through SPM tokenization and can crash at runtime
-        # with std::out_of_range in llama_tokenize. Use GPT-2 style tokenizer keys.
-        ("tokenizer.ggml.model",              GGUF_TYPE_STRING,  "gpt2"),
+        # "none" = raw token-ID pass-through; llama.cpp will not attempt BPE
+        # merging or byte-level fallback — it concatenates token strings as-is.
+        # This matches our word-level tokenizer perfectly.  Each regular token
+        # has a leading space (added in vocab_list above) so word boundaries
+        # are preserved without any merge rules.
+        ("tokenizer.ggml.model",              GGUF_TYPE_STRING,  "none"),
         ("tokenizer.ggml.pre",                GGUF_TYPE_STRING,  "default"),
         ("tokenizer.ggml.tokens",             GGUF_TYPE_ARRAY,
             (GGUF_TYPE_STRING, vocab_list)),

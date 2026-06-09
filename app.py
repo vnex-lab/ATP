@@ -135,13 +135,15 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox(
         "Choose a section:",
-        ["Data Upload", "Model Setup", "Training", "Chat Interface", "Export Model"]
+        ["Data Upload", "Model Setup", "Pre-Training", "Training", "Chat Interface", "Export Model"]
     )
     
     if page == "Data Upload":
         data_upload_section()
     elif page == "Model Setup":
         model_setup_section()
+    elif page == "Pre-Training":
+        pretrain_section()
     elif page == "Training":
         training_section()
     elif page == "Chat Interface":
@@ -789,6 +791,145 @@ def model_setup_section():
                     st.balloons()
                     st.success(f"🎉 CONGRATS! You built a {total_params/1e9:.2f}B parameter model!")
 
+def pretrain_section():
+    st.header("🧠 Pre-Training")
+    st.markdown(
+        "Pre-training teaches the model **basic language patterns** using the built-in foundational "
+        "dataset before you fine-tune it on your own data. It runs the exact same training loop as "
+        "the Training tab — same optimizer, same loss — so the weights are fully compatible. "
+        "**Always pre-train before fine-tuning for best results.**"
+    )
+
+    if st.session_state.chatbot_model is None:
+        st.warning("⚠️ Create a model first in **Model Setup**, then come back here.")
+        return
+
+    model = st.session_state.chatbot_model
+    tokenizer = st.session_state.tokenizer
+
+    if tokenizer is None:
+        st.warning("⚠️ Tokenizer not found. Load or build a vocabulary first (Data Upload → generate any dataset).")
+        return
+
+    from builtin_pretrain_dataset import PRETRAIN_PAIRS
+
+    st.info(f"📚 Built-in pre-training dataset: **{len(PRETRAIN_PAIRS):,} pairs** covering greetings, farewells, common Q&A and basic language structure.")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        pt_epochs = st.number_input("Pre-training epochs:", 1, 500, 30, 5,
+                                     help="30–100 epochs is usually enough to prime the model.")
+    with col2:
+        pt_batch = st.number_input("Batch size:", 1, 256, 16, 1)
+    with col3:
+        pt_lr_override = st.number_input(
+            "LR override (0 = use model default):", 0.0, 0.1, 0.0, format="%.6f",
+            help="Leave 0 to use whatever LR the model was created with."
+        )
+
+    save_path = st.text_input(
+        "Auto-save path after pre-training (.bin):",
+        value="pretrained_model.bin",
+        help="The model is saved here automatically when pre-training finishes."
+    )
+
+    progress_bar = st.progress(0)
+    status_text  = st.empty()
+    loss_chart   = st.empty()
+
+    if st.button("▶ Start Pre-Training", type="primary"):
+        # Build sequences from pretrain pairs
+        max_len = int(model.max_length if hasattr(model, "max_length") else model.max_seq_len)
+
+        input_seqs_all  = []
+        target_seqs_all = []
+
+        for pair in PRETRAIN_PAIRS:
+            if getattr(model, "decoder_only", False):
+                user_seq = tokenizer.encode(pair["user"],  add_special_tokens=True)
+                bot_seq  = tokenizer.encode(pair["bot"],   add_special_tokens=True)
+                full_seq = np.array(user_seq + bot_seq, dtype=np.int32)
+                if len(full_seq) > 0 and len(full_seq) <= max_len + 1:
+                    input_seqs_all.append(full_seq)
+                    target_seqs_all.append(full_seq)
+            else:
+                inp = np.array(tokenizer.encode(pair["user"], add_special_tokens=True), dtype=np.int32)
+                tgt = np.array(tokenizer.encode(pair["bot"],  add_special_tokens=True), dtype=np.int32)
+                if len(inp) > 0 and len(tgt) > 0 and len(tgt) <= max_len + 1:
+                    input_seqs_all.append(inp)
+                    target_seqs_all.append(tgt)
+
+        total_samples = len(input_seqs_all)
+        if total_samples == 0:
+            st.error("No pre-training pairs fit the current max sequence length. Increase max sequence length in Model Setup.")
+            return
+
+        st.caption(f"Using {total_samples:,} / {len(PRETRAIN_PAIRS):,} pairs (rest too long for max_len={max_len}).")
+
+        lr = pt_lr_override if pt_lr_override > 0 else None
+        num_batches = (total_samples + pt_batch - 1) // pt_batch
+        losses = []
+
+        for epoch in range(pt_epochs):
+            # Shuffle each epoch
+            perm = np.random.permutation(total_samples)
+            inp_shuffled = [input_seqs_all[i]  for i in perm]
+            tgt_shuffled = [target_seqs_all[i] for i in perm]
+
+            epoch_loss = 0.0
+            n_batches  = 0
+
+            for b in range(num_batches):
+                batch_inp = inp_shuffled[b * pt_batch : (b + 1) * pt_batch]
+                batch_tgt = tgt_shuffled[b * pt_batch : (b + 1) * pt_batch]
+                if not batch_inp:
+                    continue
+
+                try:
+                    if hasattr(model, "train_batch"):
+                        # Transformer
+                        loss = model.train_batch(batch_inp, batch_tgt, learning_rate=lr)
+                    else:
+                        # RNN
+                        loss = 0.0
+                        for inp_s, tgt_s in zip(batch_inp, batch_tgt):
+                            loss += model.train_step(inp_s, tgt_s)
+                        loss /= max(len(batch_inp), 1)
+                    epoch_loss += loss
+                    n_batches  += 1
+                except Exception as e:
+                    st.error(f"Pre-training error at epoch {epoch+1}, batch {b+1}: {e}")
+                    return
+
+            avg_loss = epoch_loss / max(n_batches, 1)
+            losses.append(avg_loss)
+
+            progress = (epoch + 1) / pt_epochs
+            progress_bar.progress(progress)
+            status_text.text(f"Epoch {epoch+1}/{pt_epochs} — loss: {avg_loss:.4f}")
+
+            if len(losses) > 1:
+                loss_chart.line_chart(losses)
+
+        # ── Auto-save ──────────────────────────────────────────────────────
+        try:
+            if hasattr(model, "save_model"):
+                model.save_model(save_path)
+            else:
+                model.save(save_path)
+            st.success(f"✅ Pre-training complete! Model saved to **{save_path}**")
+        except Exception as e:
+            st.success("✅ Pre-training complete!")
+            st.warning(f"Auto-save failed: {e}. Use Export Model tab to download manually.")
+
+        st.session_state.is_trained = True
+        st.info("💡 Now go to **Training** to fine-tune on your own dataset.")
+
+        if losses:
+            st.metric("Final pre-training loss", f"{losses[-1]:.4f}",
+                      delta=f"{losses[-1] - losses[0]:.4f}" if len(losses) > 1 else None)
+
+
 def training_section():
     st.header("Train your model")
     st.caption(
@@ -1114,13 +1255,25 @@ def chat_interface_section():
     st.subheader("⚙️ Generation Settings")
     temperature = st.slider(
         "Temperature (creativity):", 
-        min_value=0.1, 
-        max_value=2.0, 
-        value=0.8, 
-        step=0.1,
-        help="Lower = more focused/repetitive, Higher = more creative/random. Try 0.5-1.0 for best results!"
+        min_value=0.1, max_value=2.0, value=0.8, step=0.1,
+        help="Lower = more focused, Higher = more creative/random. 0.6–1.0 is the sweet spot."
     )
-    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        top_k = st.slider(
+            "Top-K:", min_value=0, max_value=200, value=40, step=5,
+            help="Only sample from the K most likely next tokens. 0 = disabled. 20–50 is good."
+        )
+        repetition_penalty = st.slider(
+            "Repetition penalty:", min_value=1.0, max_value=2.0, value=1.25, step=0.05,
+            help="Penalises tokens the model already used. Higher = less repetition. 1.1–1.4 is good."
+        )
+    with col_b:
+        top_p = st.slider(
+            "Top-P (nucleus):", min_value=0.5, max_value=1.0, value=0.92, step=0.01,
+            help="Sample from the smallest set of tokens whose cumulative probability >= P. 0.85–0.95 is good."
+        )
+
     if temperature < 0.5:
         st.info("🎯 Low temperature: Very focused, may repeat phrases")
     elif temperature > 1.5:
@@ -1158,13 +1311,19 @@ def chat_interface_section():
         for attempt in range(max_retries):
             # Check model type and use appropriate generate method
             if hasattr(model, 'generate_response'):
-                # RNN model - use special tokens to match training
+                # RNN model
                 input_seq = np.array(tokenizer.encode(user_message, add_special_tokens=True))
                 response_indices = model.generate_response(input_seq, temperature=temperature)
                 response_text = tokenizer.decode(response_indices.tolist())
             else:
                 # Transformer model
-                response_text = model.generate(user_message, tokenizer, temperature=temperature)
+                response_text = model.generate(
+                    user_message, tokenizer,
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty,
+                )
             
             # Check for 3+ consecutive commas or dots (spam detection)
             if ',,,' not in response_text and '...' not in response_text:
