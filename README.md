@@ -6,6 +6,13 @@ VnexAI is a custom chatbot training platform built from scratch using NumPy/CuPy
 
 ## User Preferences
 
+**Two Architectures** - Choose RNN (fast) or **Transformer**  
+**GPU Acceleration** - Automatically uses GPU (CuPy) if available, falls back to CPU (NumPy)  
+**Attention Mechanism** - Transformers use multi-head attention for smarter responses    
+**Export as .bin** - Download trained model and tokenizer as binary files  
+**Chat interface** - Test your chatbot in real-time with temperature control    
+**Batch Training** - Process up to 512 samples simultaneously for 10-50x speedup
+
 Preferred communication style: Simple, everyday language.
 
 ## Getting Started - Step by Step Guide
@@ -275,7 +282,14 @@ streamlit run VnexAIModel/VnexAIModel/app.py --server.port 8502
 **Web Framework**:
 - `streamlit`: Web application framework for the user interface
 
+<<<<<<< HEAD
 ### Data Storage
+=======
+- Model: Custom RNN encoder-decoder
+- Training: Backpropagation through time
+- Loss: Cross-entropy
+- Optimization: Gradient descent
+>>>>>>> 421f3ed (Finalize non-Streamlit cleanup)
 
 **Format**: In-memory storage using Streamlit session state
 

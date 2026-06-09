@@ -242,7 +242,6 @@ After training, you can download:
 
 ## Technical Details
 
-- Built with: Streamlit, NumPy
 - Model: Custom RNN encoder-decoder
 - Training: Backpropagation through time
 - Loss: Cross-entropy
