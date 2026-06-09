@@ -2,11 +2,119 @@
 
 ## Overview
 
-VnexAI is a custom chatbot training platform built from scratch using NumPy/CuPy, with a Streamlit-based web interface. The application enables users to train conversational AI models using either RNN or Transformer architectures. It allows users to upload conversation or code debugging data for training.
+VnexAI is a custom chatbot training platform built from scratch using NumPy/CuPy, with a Streamlit-based web interface. The application enables users to train conversational AI models using either [...]
 
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
+
+## Getting Started - Step by Step Guide
+
+### Prerequisites
+
+Before running the program, make sure you have:
+- **Python 3.8 or higher** installed on your system
+- **Git** installed (to clone the repository)
+- **pip** (Python package manager, usually comes with Python)
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/vnex-lab/ATP.git
+cd ATP
+```
+
+### Step 2: Create a Virtual Environment (Recommended)
+
+Creating a virtual environment keeps your project dependencies isolated:
+
+**On Windows:**
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+**On macOS/Linux:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### Step 3: Install Dependencies
+
+Install all required Python packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+**If you have an NVIDIA GPU and want GPU acceleration:**
+```bash
+pip install cupy-cuda12x
+```
+(Replace `12x` with your CUDA version. Check [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads))
+
+### Step 4: Run the Application
+
+Start the Streamlit web interface:
+
+```bash
+streamlit run VnexAIModel/VnexAIModel/app.py
+```
+
+The application will open in your default web browser at `http://localhost:8501`
+
+### Step 5: Train Your First Model
+
+Once the application is running:
+
+1. **Go to Data Upload**
+   - Upload your training data (JSON, CSV, JSONL, or text format)
+   - Preview your data to ensure it loaded correctly
+
+2. **Go to Model Setup**
+   - Click "Build Vocabulary" to create a word dictionary
+   - Choose your model architecture:
+     - **RNN**: Fast training, simpler model
+     - **Transformer**: Smarter responses, better context understanding (recommended)
+   - Configure model parameters based on your GPU:
+     - **CPU**: embedding=256, hidden=512
+     - **GTX 1650**: embedding=512, hidden=1024
+     - **RTX 3060**: embedding=1024, hidden=2048
+     - **RTX 4090+**: embedding=4096, hidden=8192+
+   - Click "Create Model"
+
+3. **Go to Training**
+   - Set number of epochs (50-100 recommended for first training)
+   - Set batch size (32-64 for GPU, 8-16 for CPU)
+   - Click "Start Training"
+   - Monitor the loss curve - it should decrease over time
+
+4. **Go to Chat Interface**
+   - Test your trained chatbot
+   - Adjust temperature slider for different response styles
+
+5. **Go to Export Model**
+   - Download your trained model (.bin file)
+   - Download your tokenizer (.bin file)
+   - Use these files with other applications
+
+### Troubleshooting
+
+**Port 8501 already in use:**
+```bash
+streamlit run VnexAIModel/VnexAIModel/app.py --server.port 8502
+```
+
+**GPU not being detected:**
+- Ensure NVIDIA CUDA Toolkit is installed
+- Run: `nvcc --version` to verify CUDA installation
+- Reinstall CuPy: `pip install --force-reinstall cupy-cuda12x`
+
+**Out of memory errors:**
+- Reduce batch size
+- Reduce embedding_dim or hidden_dim
+- Train with fewer epochs at a time
 
 ## Recent Changes
 
@@ -120,7 +228,7 @@ Preferred communication style: Simple, everyday language.
 
 - **GPU Acceleration Support**: Automatically detects and uses CuPy for GPU acceleration when available, falls back to NumPy for CPU. Provides 10-100x speedup for training on GPU-enabled systems.
 
-- **NumPy/CuPy implementation**: Provides full control and transparency over the model architecture without framework dependencies. Educational value for understanding chatbot mechanics from scratch.
+- **NumPy/CuPy implementation**: Provides full control and transparency over the model architecture without framework dependencies. Educational value for understanding chatbot mechanics from scra[...]
 
 - **Sequence-to-sequence architecture**: Simple RNN-based encoder-decoder enables conversation modeling and code transformation tasks.
 
@@ -137,7 +245,7 @@ Preferred communication style: Simple, everyday language.
 4. Train/validation/test splitting with user-defined ratios
 5. Feature scaling and encoding persistence for inference
 
-**Design Choice**: Sklearn preprocessing maintains compatibility with industry standards and provides robust, tested implementations. Preprocessor state is stored in session to enable consistent inference.
+**Design Choice**: Sklearn preprocessing maintains compatibility with industry standards and provides robust, tested implementations. Preprocessor state is stored in session to enable consistent [...]
 
 ### Visualization & Metrics
 
@@ -148,7 +256,7 @@ Preferred communication style: Simple, everyday language.
 - Regression: MSE, MAE, R² score
 - Training monitoring: Loss and accuracy curves with validation metrics
 
-**Rationale**: Plotly enables interactive exploration of results, zoom capabilities, and professional aesthetics. Subplot layouts allow simultaneous comparison of training and validation performance.
+**Rationale**: Plotly enables interactive exploration of results, zoom capabilities, and professional aesthetics. Subplot layouts allow simultaneous comparison of training and validation performa[...]
 
 ## External Dependencies
 
@@ -176,7 +284,7 @@ Preferred communication style: Simple, everyday language.
 - Preprocessor state (scalers, encoders, feature metadata)
 - Dataset splits (X_train, X_val, X_test, y_train, y_val, y_test)
 
-**Rationale**: Session-based storage eliminates need for external database while maintaining user context during application lifecycle. For production deployment, this could be extended to persist models to disk or cloud storage.
+**Rationale**: Session-based storage eliminates need for external database while maintaining user context during application lifecycle. For production deployment, this could be extended to persis[...]
 
 ### Model Persistence
 
@@ -184,4 +292,4 @@ Preferred communication style: Simple, everyday language.
 
 **Export Capability**: ZIP file generation containing model artifacts and preprocessor state
 
-**Design Decision**: JSON provides human-readable model inspection and cross-platform compatibility. Future enhancement could include pickle serialization or ONNX export for production deployment.
+**Design Decision**: JSON provides human-readable model inspection and cross-platform compatibility. Future enhancement could include pickle serialization or ONNX export for production deployment[...]
