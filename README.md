@@ -140,18 +140,84 @@ npm run build
 
 ## API endpoints
 
-The backend exposes endpoints for data upload, model setup, and status checks. Key routes include:
+The backend exposes endpoints for data upload, model setup, status checks, and extension management. Key routes include:
 
 - `GET /api/status`
 - `POST /api/data/upload-file`
 - `POST /api/data/upload-text`
 - `POST /api/data/load-builtin`
 - `GET /api/data/info`
+- `GET /api/plugins`
+- `GET /api/plugins/status`
+- `POST /api/plugins/reload`
 
 Use the frontend or your own HTTP client to interact with these endpoints.
+
+## Testing
+
+A lightweight verification script is included to validate parsing, plugin loading, tokenizer initialization, model startup, and API import.
+
+Run the test suite with:
+
+```bash
+python test_api.py
+```
 
 ## Notes
 
 - This repository is configured for the FastAPI-based application.
 - The root `api.py` file is the main entrypoint for running the service.
 - Building the frontend is optional if you only need the API.
+
+## Extensions: Plugins and Mods
+
+This project supports a simple plugin and mod system to make it easy to extend behavior, add routes, or modify code.
+
+### Plugin directory
+
+Add custom backend extensions in the `plugins/` directory. Plugins can:
+
+- register new FastAPI routes
+- run startup hooks
+- change internal state
+- provide UI-facing data through API endpoints
+
+Example plugin path:
+
+- `plugins/your_plugin.py`
+
+A plugin should expose:
+
+- `name` and `description`
+- `register_routes(app, state, training_state)`
+- optional `on_startup(app, state, training_state)`
+
+### Mods directory
+
+Add code and behavior alterations in the `mods/` directory. Mods can apply transforms, patch files, or run custom project logic.
+
+Example mod path:
+
+- `mods/your_mod.py`
+
+A mod should expose:
+
+- `name` and `description`
+- `apply_mod()`
+
+### Extension scripts
+
+Use the helper scripts in `scripts/` to manage plugins and mods.
+
+- `python scripts/list_extensions.py` - list available plugins and mods
+- `python scripts/create_plugin.py <plugin_name>` - create a new plugin template
+- `python scripts/create_mod.py <mod_name>` - create a new mod template
+- `python scripts/run_mods.py` - run all mods and apply their changes
+
+### Plugin API
+
+A runtime plugin list is available at:
+
+- `GET /api/plugins`
+
+The plugin manager also loads and registers every plugin in `plugins/` automatically when the backend starts.

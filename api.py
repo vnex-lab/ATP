@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from chatbot_model import VnexAIChatbot
 from transformer_model import TransformerChatbot
 from chatbot_tokenizer import ChatbotTokenizer
+from plugin_manager import register_plugins, ensure_extension_dirs
 
 PRETRAIN_FILE = os.path.join(os.path.dirname(__file__), "pretrain_data.json")
 
@@ -78,6 +79,8 @@ def _load_pretrain_from_disk():
             pass
 
 _load_pretrain_from_disk()
+ensure_extension_dirs()
+register_plugins(app, state, training_state)
 
 
 def _save_pretrain_to_disk(data: List[Dict]):
@@ -124,52 +127,71 @@ def compute_val_loss(model, val_inp, val_tgt, batch_size=32, use_sft=False, val_
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 def parse_code_parquet(df, max_pairs=2000):
-    col_map = {c.lower(): c for c in df.columns}
-    content_col = col_map.get('content')
-    lang_col = col_map.get('lang')
-    if not content_col:
-        return []
-    if lang_col:
-        df = df[df[lang_col].str.lower().isin(['python', 'py'])].copy()
-    data = []
-    pattern = re.compile(
-        r'((?:async\s+)?def\s+\w+\s*\([^)]*\)(?:\s*->[^\n:]+)?:)'
-        r'[ \t]*\n[ \t]+'
-        r'(?:\"\"\"(.*?)\"\"\"|\'\'\'(.*?)\'\'\')'
-        r'(.*?)(?=\n[ \t]*(?:async\s+)?def |\Z)',
-        re.DOTALL
-    )
-    for _, row in df.iterrows():
-        if len(data) >= max_pairs:
-            break
-        code = str(row[content_col])
-        for m in pattern.finditer(code):
-            sig = m.group(1).strip()
-            doc = (m.group(2) or m.group(3) or '').strip()
-            body = m.group(4).strip()
-            if doc and len(doc) > 5 and len(body) > 5 and len(body) < 3000:
-                data.append({'user': f'Write a Python function that: {doc}', 'bot': f'{sig}\n    """{doc}"""\n    {body}'})
-                if len(data) >= max_pairs:
-                    break
-    if len(data) < 10:
+    try:
+        col_map = {c.lower(): c for c in df.columns}
+        content_col = col_map.get('content')
+        lang_col = col_map.get('lang')
+        if not content_col:
+            return []
+        if lang_col:
+            try:
+                df = df[df[lang_col].str.lower().isin(['python', 'py'])].copy()
+            except (TypeError, ValueError):
+                pass
+        data = []
+        pattern = re.compile(
+            r'((?:async\s+)?def\s+\w+\s*\([^)]*\)(?:\s*->[^\n:]+)?:)'
+            r'[ \t]*\n[ \t]+'
+            r'(?:\"\"\"(.*?)\"\"\"|\'\'\'(.*?)\'\'\')'
+            r'(.*?)(?=\n[ \t]*(?:async\s+)?def |\Z)',
+            re.DOTALL
+        )
         for _, row in df.iterrows():
             if len(data) >= max_pairs:
                 break
-            code = str(row[content_col])
-            lines = [l for l in code.split('\n') if l.strip()]
-            if len(lines) >= 8:
-                mid = max(2, len(lines) // 3)
-                user_msg = '\n'.join(lines[:mid])
-                bot_msg = '\n'.join(lines[mid:])
-                if len(user_msg) > 20 and len(bot_msg) > 20:
-                    data.append({'user': user_msg, 'bot': bot_msg})
-    return data
+            try:
+                code = str(row[content_col])
+                for m in pattern.finditer(code):
+                    sig = m.group(1).strip()
+                    doc = (m.group(2) or m.group(3) or '').strip()
+                    body = m.group(4).strip()
+                    if doc and len(doc) > 5 and len(body) > 5 and len(body) < 3000:
+                        data.append({'user': f'Write a Python function that: {doc}', 'bot': f'{sig}\n    """{doc}"""\n    {body}'})
+                        if len(data) >= max_pairs:
+                            break
+            except (TypeError, ValueError):
+                continue
+        if len(data) < 10:
+            for _, row in df.iterrows():
+                if len(data) >= max_pairs:
+                    break
+                try:
+                    code = str(row[content_col])
+                    lines = [l for l in code.split('\n') if l.strip()]
+                    if len(lines) >= 8:
+                        mid = max(2, len(lines) // 3)
+                        user_msg = '\n'.join(lines[:mid])
+                        bot_msg = '\n'.join(lines[mid:])
+                        if len(user_msg) > 20 and len(bot_msg) > 20:
+                            data.append({'user': user_msg, 'bot': bot_msg})
+                except (TypeError, ValueError):
+                    continue
+        return data
+    except Exception:
+        return []
 
 
 def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
     data = []
     if filename.endswith('.json') or filename.endswith('.jsonl'):
-        text = content.decode('utf-8')
+        try:
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                text = content.decode('latin-1')
+        except UnicodeDecodeError:
+            return []
+        
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
@@ -178,7 +200,7 @@ def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
                 if line.strip():
                     try:
                         raw.append(json.loads(line))
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         continue
         if isinstance(raw, list) and raw:
             first = raw[0]
@@ -198,7 +220,14 @@ def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
             data = raw if isinstance(raw, list) else []
 
     elif filename.endswith('.txt'):
-        text = content.decode('utf-8')
+        try:
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                text = content.decode('latin-1')
+        except UnicodeDecodeError:
+            return []
+        
         entries = re.split(r'\n\d+:\{', text)
         parsed_json = False
         for i, entry in enumerate(entries):
@@ -221,7 +250,7 @@ def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
                         if orig and fixed:
                             data.append({'user': f'Fix this {lang} code with {status}: {orig}', 'bot': fixed})
                             parsed_json = True
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 continue
         if not parsed_json:
             for line in text.split('\n'):
@@ -243,54 +272,75 @@ def parse_uploaded_file(content: bytes, filename: str) -> List[Dict]:
                             break
 
     elif filename.endswith('.csv') or filename.endswith('.tsv'):
-        text = content.decode('utf-8')
-        delimiter = '\t' if filename.endswith('.tsv') else ','
-        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-        for row in reader:
-            u = b = None
-            for key in row.keys():
-                kl = key.lower().strip()
-                if kl in ['user', 'question', 'input', 'q', 'prompt', 'human'] and row[key]:
-                    u = row[key].strip()
-                    break
-            for key in row.keys():
-                kl = key.lower().strip()
-                if kl in ['bot', 'answer', 'output', 'a', 'response', 'assistant', 'reply'] and row[key]:
-                    b = row[key].strip()
-                    break
-            if u is None or b is None:
-                cols = list(row.values())
-                if len(cols) >= 2:
-                    u = cols[0].strip() if cols[0] else None
-                    b = cols[1].strip() if cols[1] else None
-            if u and b:
-                data.append({'user': u, 'bot': b})
+        try:
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                text = content.decode('latin-1')
+            
+            delimiter = '\t' if filename.endswith('.tsv') else ','
+            reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+            for row in reader:
+                try:
+                    u = b = None
+                    for key in row.keys():
+                        kl = key.lower().strip()
+                        if kl in ['user', 'question', 'input', 'q', 'prompt', 'human'] and row[key]:
+                            u = row[key].strip()
+                            break
+                    for key in row.keys():
+                        kl = key.lower().strip()
+                        if kl in ['bot', 'answer', 'output', 'a', 'response', 'assistant', 'reply'] and row[key]:
+                            b = row[key].strip()
+                            break
+                    if u is None or b is None:
+                        cols = list(row.values())
+                        if len(cols) >= 2:
+                            u = cols[0].strip() if cols[0] else None
+                            b = cols[1].strip() if cols[1] else None
+                    if u and b:
+                        data.append({'user': u, 'bot': b})
+                except (ValueError, TypeError, KeyError):
+                    continue
+        except (csv.Error, UnicodeDecodeError, ValueError):
+            pass
 
     elif filename.endswith('.parquet'):
-        import pandas as pd
-        df = pd.read_parquet(io.BytesIO(content))
-        col_lower_set = {c.lower() for c in df.columns}
-        if 'content' in col_lower_set:
-            data = parse_code_parquet(df, max_pairs=2000)
-        else:
-            user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
-            bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
-            user_col = next((c for c in df.columns if c.lower() in user_cols), None)
-            bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
-            if user_col and bot_col:
-                for _, row in df.iterrows():
-                    u = str(row[user_col]).strip()
-                    b = str(row[bot_col]).strip()
-                    if u and b:
-                        data.append({'user': u, 'bot': b})
-            elif len(df.columns) == 2:
-                for _, row in df.iterrows():
-                    u = str(row.iloc[0]).strip()
-                    b = str(row.iloc[1]).strip()
-                    if u and b:
-                        data.append({'user': u, 'bot': b})
+        try:
+            import pandas as pd
+            df = pd.read_parquet(io.BytesIO(content))
+            col_lower_set = {c.lower() for c in df.columns}
+            if 'content' in col_lower_set:
+                data = parse_code_parquet(df, max_pairs=2000)
             else:
-                raise ValueError(f"Cannot auto-detect columns. Found: {list(df.columns)}")
+                user_cols = ['user', 'question', 'input', 'human', 'original_src', 'prompt', 'query', 'instruction', 'text']
+                bot_cols = ['bot', 'answer', 'output', 'assistant', 'changed_src', 'response', 'reply', 'completion', 'target']
+                user_col = next((c for c in df.columns if c.lower() in user_cols), None)
+                bot_col = next((c for c in df.columns if c.lower() in bot_cols), None)
+                if user_col and bot_col:
+                    for _, row in df.iterrows():
+                        try:
+                            u = str(row[user_col]).strip()
+                            b = str(row[bot_col]).strip()
+                            if u and b:
+                                data.append({'user': u, 'bot': b})
+                        except (ValueError, TypeError):
+                            continue
+                elif len(df.columns) == 2:
+                    for _, row in df.iterrows():
+                        try:
+                            u = str(row.iloc[0]).strip()
+                            b = str(row.iloc[1]).strip()
+                            if u and b:
+                                data.append({'user': u, 'bot': b})
+                        except (ValueError, TypeError):
+                            continue
+                else:
+                    raise ValueError(f"Cannot auto-detect columns. Found: {list(df.columns)}")
+        except (ImportError, ValueError, Exception) as e:
+            if isinstance(e, ValueError):
+                raise
+            pass
     return data
 
 
@@ -452,6 +502,25 @@ async def get_status():
         "chat_history": state["chat_history"],
         "training": ts,
     }
+
+
+@app.get("/api/plugins")
+async def get_plugins():
+    from plugin_manager import plugin_info
+    return plugin_info()
+
+
+@app.get("/api/plugins/status")
+async def get_plugin_status():
+    from plugin_manager import get_plugin_status
+    return get_plugin_status()
+
+
+@app.post("/api/plugins/reload")
+async def reload_plugins():
+    from plugin_manager import reload_extensions
+    result = reload_extensions()
+    return result
 
 
 # ─── Routes: data ──────────────────────────────────────────────────────────────
