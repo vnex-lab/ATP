@@ -5,6 +5,8 @@ import PageShell from '../components/PageShell'
 import Card from '../components/Card'
 import Btn from '../components/Btn'
 import Badge from '../components/Badge'
+import { theme } from '../theme'
+import { textareaStyle, labelStyle, tabStyle, dropZoneStyle, sectionLabel, alertColors, insetBox } from '../styles'
 
 type Method = 'file' | 'text' | 'assistant' | 'sft'
 
@@ -107,17 +109,7 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
           <button
             key={m.id}
             onClick={() => { setMethod(m.id); setMsg(null) }}
-            style={{
-              padding: '7px 14px',
-              borderRadius: 7,
-              border: `1px solid ${method === m.id ? '#3b82f6' : '#252525'}`,
-              background: method === m.id ? '#1e3a5f' : '#0f0f0f',
-              color: method === m.id ? '#93c5fd' : '#94a3b8',
-              fontSize: 13,
-              cursor: 'pointer',
-              fontWeight: method === m.id ? 600 : 400,
-              transition: 'all 0.1s',
-            }}
+            style={tabStyle(method === m.id)}
           >
             {m.label}
           </button>
@@ -134,21 +126,13 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
             onDragLeave={() => setDragging(false)}
             onDrop={handleDrop}
             onClick={() => fileRef.current?.click()}
-            style={{
-              border: `2px dashed ${dragging ? '#3b82f6' : '#252525'}`,
-              borderRadius: 10,
-              padding: '40px 20px',
-              textAlign: 'center',
-              cursor: 'pointer',
-              background: dragging ? '#1e3a5f22' : '#0f0f0f',
-              transition: 'all 0.15s',
-            }}
+            style={dropZoneStyle(dragging)}
           >
-            <div style={{ fontSize: 32, marginBottom: 10, color: '#475569' }}>↑</div>
-            <div style={{ color: '#e2e8f0', fontWeight: 500, marginBottom: 6 }}>
+            <div style={{ fontSize: 28, marginBottom: 10, color: theme.textMuted }}>+</div>
+            <div style={{ color: theme.text, fontWeight: 500, marginBottom: 6 }}>
               Drop a file here or click to browse
             </div>
-            <div style={{ color: '#475569', fontSize: 12 }}>
+            <div style={{ color: theme.textMuted, fontSize: 12 }}>
               Supports: JSON · JSONL · CSV · TSV · TXT · Parquet
             </div>
             <input
@@ -170,9 +154,9 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
                 ['Parquet', 'HuggingFace datasets, The Stack, etc.'],
                 ['Code Debug', '{"original_src": ..., "changed_src": ...}'],
               ].map(([fmt, desc]) => (
-                <div key={fmt} style={{ background: '#111', borderRadius: 7, padding: '8px 12px', border: '1px solid #1e1e1e' }}>
-                  <div style={{ color: '#93c5fd', fontSize: 12, fontWeight: 600, fontFamily: 'monospace' }}>{fmt}</div>
-                  <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{desc}</div>
+                <div key={fmt} style={{ ...insetBox, padding: '8px 12px' }}>
+                  <div style={{ color: theme.info, fontSize: 12, fontWeight: 600, fontFamily: theme.mono }}>{fmt}</div>
+                  <div style={{ color: theme.textMuted, fontSize: 11, marginTop: 2 }}>{desc}</div>
                 </div>
               ))}
             </div>
@@ -250,18 +234,18 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
       {method === 'assistant' && (
         <Card>
           <SectionLabel>Built-in Assistant Dialog Dataset</SectionLabel>
-          <p style={{ color: '#94a3b8', fontSize: 13, margin: '8px 0 16px' }}>
-            A large collection of general assistant-style conversation pairs. Ideal for training a helpful chatbot from scratch.
+          <p style={{ color: theme.textSecondary, fontSize: 13, margin: '8px 0 16px' }}>
+            A large collection of general assistant-style conversation pairs. Ideal for training a conversational model from scratch.
           </p>
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>Target dataset size: <strong style={{ color: '#e2e8f0' }}>{targetMb} MB</strong></label>
+            <label style={labelStyle}>Target dataset size: <strong style={{ color: theme.text }}>{targetMb} MB</strong></label>
             <input
               type="range"
               min={15}
               max={100}
               value={targetMb}
               onChange={(e) => setTargetMb(Number(e.target.value))}
-              style={{ width: '100%', marginTop: 8, accentColor: '#3b82f6' }}
+              style={{ width: '100%', marginTop: 8, accentColor: theme.accent }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', fontSize: 11, marginTop: 4 }}>
               <span>15 MB (fast)</span>
@@ -293,7 +277,7 @@ export default function DataPage({ status, onRefresh }: { status: AppStatus; onR
               step={1000}
               value={sftRows}
               onChange={(e) => setSftRows(Number(e.target.value))}
-              style={{ width: '100%', marginTop: 8, accentColor: '#3b82f6' }}
+              style={{ width: '100%', marginTop: 8, accentColor: theme.accent }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', fontSize: 11, marginTop: 4 }}>
               <span>3,000 (fast)</span>
@@ -331,11 +315,11 @@ function PreviewSection({ preview, status }: { preview: { user: string; bot: str
       {items.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.slice(0, 3).map((p, i) => (
-            <div key={i} style={{ background: '#111', borderRadius: 8, padding: 12, border: '1px solid #1e1e1e' }}>
+            <div key={i} style={{ ...insetBox, padding: 12 }}>
               <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 11, color: '#3b82f6', fontWeight: 700, background: '#1e3a5f', padding: '2px 6px', borderRadius: 4 }}>USER</span>
+                <span style={{ fontSize: 11, color: theme.accent, fontWeight: 700, background: theme.accentMuted, padding: '2px 6px', borderRadius: 4 }}>USER</span>
               </div>
-              <div style={{ color: '#e2e8f0', fontSize: 13, marginBottom: 10, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+              <div style={{ color: theme.text, fontSize: 13, marginBottom: 10, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
                 {p.user.length > 200 ? p.user.slice(0, 200) + '…' : p.user}
               </div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
@@ -354,22 +338,17 @@ function PreviewSection({ preview, status }: { preview: { user: string; bot: str
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: '#111', borderRadius: 7, padding: '6px 12px', border: '1px solid #1e1e1e' }}>
-      <div style={{ fontSize: 11, color: '#475569' }}>{label}</div>
-      <div style={{ fontSize: 14, color: '#e2e8f0', fontWeight: 600 }}>{value}</div>
+    <div style={{ ...insetBox, padding: '6px 12px' }}>
+      <div style={{ fontSize: 11, color: theme.textMuted }}>{label}</div>
+      <div style={{ fontSize: 14, color: theme.text, fontWeight: 600 }}>{value}</div>
     </div>
   )
 }
 
 function Alert({ type, text }: { type: 'success' | 'error' | 'info'; text: string }) {
-  const colors = {
-    success: { bg: '#14532d', border: '#166534', text: '#86efac' },
-    error: { bg: '#450a0a', border: '#7f1d1d', text: '#fca5a5' },
-    info: { bg: '#1e3a5f', border: '#1e40af', text: '#93c5fd' },
-  }
-  const c = colors[type]
+  const c = alertColors[type]
   return (
-    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: c.text, fontSize: 13 }}>
+    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, color: c.text, fontSize: 13 }}>
       {text}
     </div>
   )
@@ -377,34 +356,13 @@ function Alert({ type, text }: { type: 'success' | 'error' | 'info'; text: strin
 
 function Spinner({ text }: { text: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0', color: '#94a3b8', fontSize: 13 }}>
-      <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#3b82f6', display: 'inline-block' }} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0', color: theme.textSecondary, fontSize: 13 }}>
+      <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accent, display: 'inline-block' }} />
       {text}
     </div>
   )
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{children}</div>
-}
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#94a3b8',
-  display: 'block',
-  marginBottom: 6,
-  fontWeight: 500,
-}
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%',
-  background: '#111',
-  border: '1px solid #252525',
-  borderRadius: 7,
-  padding: '8px 10px',
-  color: '#e2e8f0',
-  fontSize: 13,
-  resize: 'vertical',
-  outline: 'none',
-  fontFamily: 'inherit',
+  return <div style={sectionLabel}>{children}</div>
 }

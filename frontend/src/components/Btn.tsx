@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { theme } from '../theme'
 
 interface Props {
   children: ReactNode
@@ -10,23 +11,22 @@ interface Props {
 
 export default function Btn({ children, onClick, variant = 'default', disabled, type = 'button' }: Props) {
   const base: React.CSSProperties = {
-    padding: '8px 16px',
-    borderRadius: 7,
+    padding: '6px 14px',
+    borderRadius: 4,
     border: '1px solid',
     fontSize: 13,
-    fontWeight: 500,
+    fontWeight: 400,
     cursor: disabled ? 'default' : 'pointer',
-    fontFamily: 'inherit',
-    transition: 'all 0.1s',
+    fontFamily: theme.font,
     opacity: disabled ? 0.5 : 1,
     outline: 'none',
     whiteSpace: 'nowrap',
   }
 
   const variants: Record<string, React.CSSProperties> = {
-    default: { background: '#1c1c1c', borderColor: '#252525', color: '#94a3b8' },
-    primary: { background: '#2563eb', borderColor: '#2563eb', color: '#fff' },
-    danger: { background: '#7f1d1d', borderColor: '#991b1b', color: '#fca5a5' },
+    default: { background: theme.panel, borderColor: theme.border, color: theme.text },
+    primary: { background: theme.accent, borderColor: theme.accent, color: '#fff' },
+    danger: { background: theme.errorBg, borderColor: theme.error, color: theme.error },
   }
 
   return (

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import DataPage from './pages/DataPage'
+import ModelsPage from './pages/ModelsPage'
 import ModelPage from './pages/ModelPage'
 import PretrainPage from './pages/PretrainPage'
 import TrainPage from './pages/TrainPage'
@@ -8,6 +9,7 @@ import ChatPage from './pages/ChatPage'
 import ExportPage from './pages/ExportPage'
 import { getStatus } from './api'
 import type { Page, AppStatus } from './types'
+import { theme } from './theme'
 
 const DEFAULT_STATUS: AppStatus = {
   has_training_data: false,
@@ -20,6 +22,16 @@ const DEFAULT_STATUS: AppStatus = {
   model_type: null,
   training_data_profile: null,
   chat_history: [],
+  training_mode: 'scratch',
+  active_model_name: null,
+  active_model_slug: null,
+  saved_models_count: 0,
+  cot_reasoning: {
+    enabled: false,
+    loaded: false,
+    count: 0,
+    decoder_only: null,
+  },
   training: {
     is_training: false,
     progress: 0,
@@ -54,19 +66,40 @@ export default function App() {
     return () => clearInterval(id)
   }, [refreshStatus])
 
+  const isInference = page === 'chat'
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#080808]">
-      <Sidebar page={page} setPage={setPage} status={status} />
-      <main className="flex-1 overflow-y-auto">
-        <div className="fade-in h-full">
+    <div
+      className="flex h-screen w-screen overflow-hidden"
+      style={{ background: theme.bg, color: theme.text, fontFamily: theme.font }}
+    >
+      {!isInference && <Sidebar page={page} setPage={setPage} status={status} />}
+      <main
+        className="flex-1 min-h-0"
+        style={{
+          background: theme.bg,
+          overflow: isInference ? 'hidden' : 'auto',
+        }}
+      >
+        <div className={`fade-in ${isInference ? 'h-full' : ''}`}>
           {page === 'data'     && <DataPage    status={status} onRefresh={refreshStatus} />}
+          {page === 'models'   && <ModelsPage  status={status} onRefresh={refreshStatus} />}
           {page === 'model'    && <ModelPage   status={status} onRefresh={refreshStatus} />}
           {page === 'pretrain' && <PretrainPage status={status} onRefresh={refreshStatus} />}
           {page === 'train'    && <TrainPage   status={status} onRefresh={refreshStatus} />}
-          {page === 'chat'     && <ChatPage    status={status} onRefresh={refreshStatus} />}
+          {page === 'chat'     && (
+            <ChatPage
+              status={status}
+              onRefresh={refreshStatus}
+              onLeave={() => setPage('train')}
+            />
+          )}
           {page === 'export'   && <ExportPage  status={status} onRefresh={refreshStatus} />}
         </div>
       </main>
+      {isInference && (
+        <Sidebar page={page} setPage={setPage} status={status} compact />
+      )}
     </div>
   )
 }

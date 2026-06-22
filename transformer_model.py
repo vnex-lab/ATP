@@ -1,4 +1,43 @@
+import os
 import numpy as np
+
+
+def _configure_cuda_dll_paths():
+    """Prefer a CUDA 12 Toolkit for cupy-cuda12x on Windows."""
+    if os.name != "nt":
+        return
+
+    candidates = []
+    for key, value in os.environ.items():
+        if key.startswith("CUDA_PATH_V12_") and value:
+            candidates.append(value)
+
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path and "\\v12." in cuda_path.lower():
+        candidates.append(cuda_path)
+
+    toolkit_root = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+    if os.path.isdir(toolkit_root):
+        for name in sorted(os.listdir(toolkit_root), reverse=True):
+            if name.startswith("v12."):
+                candidates.append(os.path.join(toolkit_root, name))
+
+    for candidate in candidates:
+        root = candidate
+        if os.path.basename(root).lower() in {"bin", "x64"}:
+            root = os.path.dirname(root)
+        bin_dir = os.path.join(root, "bin")
+        if os.path.isdir(bin_dir) and os.path.exists(os.path.join(bin_dir, "cublas64_12.dll")):
+            os.environ["CUDA_PATH"] = root
+            os.environ["CUDA_HOME"] = root
+            os.add_dll_directory(bin_dir)
+            lib_dir = os.path.join(root, "lib", "x64")
+            if os.path.isdir(lib_dir):
+                os.add_dll_directory(lib_dir)
+            return
+
+
+_configure_cuda_dll_paths()
 
 # GPU Support — same validated pattern as chatbot_model.py
 try:
@@ -9,6 +48,8 @@ try:
         cp.random.seed(42)
         _test2 = cp.random.randn(4, 4)
         _ = cp.exp(_test2)
+        _ = _test2 @ _test2
+        cp.cuda.Stream.null.synchronize()
         GPU_AVAILABLE = True
         print("Transformer: GPU verified - using CuPy!")
     except Exception as _e:

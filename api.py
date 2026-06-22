@@ -12,6 +12,7 @@ import tempfile
 import pickle
 import threading
 import time
+import zipfile
 import numpy as np
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
@@ -20,10 +21,13 @@ from chatbot_model import VnexAIChatbot
 from transformer_model import TransformerChatbot
 from chatbot_tokenizer import ChatbotTokenizer
 from plugin_manager import register_plugins, ensure_extension_dirs
+import reasoning
+import model_library
 
 PRETRAIN_FILE = os.path.join(os.path.dirname(__file__), "pretrain_data.json")
+SAVED_MODELS_DIR = model_library.LIBRARY_DIR
 
-app = FastAPI(title="LLM Vite API")
+app = FastAPI(title="Model Studio API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,6 +51,9 @@ state: Dict[str, Any] = {
     "training_data_profile": None,
     "model_config": None,
     "model_type": None,
+    "training_mode": "scratch",
+    "active_model_slug": None,
+    "active_model_name": None,
 }
 
 training_state: Dict[str, Any] = {
@@ -79,8 +86,10 @@ def _load_pretrain_from_disk():
             pass
 
 _load_pretrain_from_disk()
+reasoning.startup(state)
 ensure_extension_dirs()
 register_plugins(app, state, training_state)
+reasoning.register_routes(app, state, training_state)
 
 
 def _save_pretrain_to_disk(data: List[Dict]):
@@ -376,7 +385,8 @@ def run_training_thread(model, tokenizer, data, config, pretrain_data=None):
     shuffle    = config.get("shuffle_data", True)
     use_sft    = config.get("use_sft", False)
     use_pretrain = config.get("use_pretrain", False)
-    val_split  = config.get("val_split", 0.1)       # fraction held out for validation
+    training_mode = config.get("training_mode", state.get("training_mode", "scratch"))
+    val_split  = config.get("val_split", 0.1)
     max_len    = int(model.max_length if hasattr(model, "max_length") else model.max_seq_len)
 
     with training_lock:
@@ -391,6 +401,12 @@ def run_training_thread(model, tokenizer, data, config, pretrain_data=None):
         training_state["gpu_available"] = bool(getattr(model, "gpu_available", False))
 
     try:
+        if training_mode == "finetune" and hasattr(model, "learning_rate"):
+            base_lr = float(getattr(model, "learning_rate", 0.003))
+            model.learning_rate = base_lr * float(config.get("finetune_lr_multiplier", 0.1))
+            if hasattr(model, "initial_lr"):
+                model.initial_lr = model.learning_rate
+
         if hasattr(model, "clear_update_coverage"):
             model.clear_update_coverage()
 
@@ -471,6 +487,13 @@ def run_training_thread(model, tokenizer, data, config, pretrain_data=None):
 
         model.training_history['loss'] = losses
         state["is_trained"] = True
+        state["training_mode"] = training_mode
+
+        auto_name = state.get("active_model_name") or f"model_{time.strftime('%Y%m%d_%H%M%S')}"
+        try:
+            model_library.save_model(state, auto_name, source="auto_saved")
+        except Exception:
+            pass
 
         with training_lock:
             training_state["is_training"] = False
@@ -489,6 +512,7 @@ def run_training_thread(model, tokenizer, data, config, pretrain_data=None):
 async def get_status():
     with training_lock:
         ts = dict(training_state)
+    model = state.get("model")
     return {
         "has_training_data": state["training_data"] is not None,
         "training_data_count": len(state["training_data"]) if state["training_data"] else 0,
@@ -501,6 +525,16 @@ async def get_status():
         "training_data_profile": state["training_data_profile"],
         "chat_history": state["chat_history"],
         "training": ts,
+        "cot_reasoning": {
+            "enabled": bool(state.get("cot_reasoning_enabled", False)),
+            "loaded": state.get("cot_data") is not None,
+            "count": len(state.get("cot_data") or []),
+            "decoder_only": bool(getattr(model, "decoder_only", False)) if model else None,
+        },
+        "training_mode": state.get("training_mode", "scratch"),
+        "active_model_name": state.get("active_model_name"),
+        "active_model_slug": state.get("active_model_slug"),
+        "saved_models_count": len(model_library.list_models()),
     }
 
 
@@ -674,6 +708,10 @@ async def create_model(request: Request):
         state["model"] = model
         state["is_trained"] = False
         state["model_config"] = {**body, "vocab_size": vocab_size, "model_type": model_type}
+        state["training_mode"] = body.get("training_mode", "scratch")
+        if state["training_mode"] != "finetune":
+            state["active_model_slug"] = None
+            state["active_model_name"] = None
 
         gpu_info = model.get_device_info() if hasattr(model, 'get_device_info') else (
             "GPU: Enabled (CuPy)" if model.gpu_available else "CPU Only (NumPy)"
@@ -763,19 +801,28 @@ async def pretrain_load():
     from builtin_pretrain_dataset import get_pretrain_pairs
     pairs = get_pretrain_pairs()
     state["pretrain_data"] = pairs
+    if state.get("cot_data"):
+        reasoning.merge_into_pretrain(state, state["cot_data"])
     _save_pretrain_to_disk(pairs)
-    return {"count": len(pairs), "message": f"Loaded {len(pairs)} pre-training pairs and saved to disk."}
+    return {
+        "count": len(state["pretrain_data"] or []),
+        "message": f"Loaded {len(pairs)} pre-training pairs and merged CoT data.",
+    }
 
 
 @app.delete("/api/pretrain")
 async def pretrain_delete():
     """Delete the pre-training dataset from memory and disk."""
-    state["pretrain_data"] = None
+    state["pretrain_data"] = list(state.get("cot_data") or []) or None
     _delete_pretrain_from_disk()
-    return {"message": "Pre-training data deleted."}
+    return {"message": "Pre-training foundation data deleted."}
 
 
 # ─── Routes: chat ──────────────────────────────────────────────────────────────
+def _cot_generate(model, tokenizer, message: str, temperature: float):
+    return reasoning.generate_with_reasoning(model, tokenizer, message, temperature=temperature)
+
+
 @app.post("/api/chat/send")
 async def chat_send(request: Request):
     body = await request.json()
@@ -790,33 +837,62 @@ async def chat_send(request: Request):
     if not state["is_trained"]:
         raise HTTPException(status_code=400, detail="Model not trained yet.")
 
-    max_retries = 3
-    response_text = ""
-    temp = temperature
-    for attempt in range(max_retries):
+    reasoning_text = None
+    cot_enabled = bool(state.get("cot_reasoning_enabled", False))
+    decoder_only = bool(getattr(model, "decoder_only", False))
+
+    if cot_enabled and decoder_only:
         try:
-            if hasattr(model, 'generate_response'):
-                input_seq = np.array(tokenizer.encode(message, add_special_tokens=True))
-                response_indices = model.generate_response(input_seq, temperature=temp)
-                response_text = tokenizer.decode(response_indices.tolist())
-            else:
-                response_text = model.generate(message, tokenizer, temperature=temp)
+            result = _cot_generate(model, tokenizer, message, temperature)
+            response_text = result["answer"]
+            reasoning_text = result.get("reasoning_final")
         except Exception as e:
-            response_text = f"[Error: {str(e)}]"
-            break
-        if ',,,' not in response_text and '...' not in response_text:
-            break
-        temp = min(temp + 0.3, 2.0)
+            raise HTTPException(status_code=500, detail=f"Reasoning generation failed: {e}")
+    else:
+        max_retries = 3
+        response_text = ""
+        temp = temperature
+        for attempt in range(max_retries):
+            try:
+                if hasattr(model, 'generate_response'):
+                    input_seq = np.array(tokenizer.encode(message, add_special_tokens=True))
+                    response_indices = model.generate_response(input_seq, temperature=temp)
+                    response_text = tokenizer.decode(response_indices.tolist())
+                else:
+                    response_text = model.generate(message, tokenizer, temperature=temp)
+            except Exception as e:
+                response_text = f"[Error: {str(e)}]"
+                break
+            if ',,,' not in response_text and '...' not in response_text:
+                break
+            temp = min(temp + 0.3, 2.0)
 
     state["chat_history"].append({"role": "user", "content": message})
-    state["chat_history"].append({"role": "bot", "content": response_text})
-    return {"response": response_text, "history": state["chat_history"]}
+    bot_msg: Dict[str, Any] = {"role": "bot", "content": response_text}
+    if reasoning_text:
+        bot_msg["reasoning"] = reasoning_text
+    state["chat_history"].append(bot_msg)
+    return {
+        "response": response_text,
+        "reasoning": reasoning_text,
+        "history": state["chat_history"],
+    }
 
 
 @app.post("/api/chat/clear")
 async def chat_clear():
     state["chat_history"] = []
     return {"ok": True}
+
+
+@app.post("/api/chat/restore")
+async def chat_restore(request: Request):
+    body = await request.json()
+    history = body.get("history", [])
+    if not isinstance(history, list):
+        raise HTTPException(status_code=400, detail="history must be a list.")
+    state["chat_history"] = history
+    return {"history": state["chat_history"]}
 
 
 # ─── Routes: export ────────────────────────────────────────────────────────────
@@ -944,6 +1020,155 @@ PARAMETER num_ctx {num_ctx}
 TEMPLATE \"\"\"{{{{ .Prompt }}}}\"\"\"
 """
     return {"modelfile": modelfile_text, "full_tag": f"{ollama_username}/{model_name}"}
+
+
+# ─── Routes: model library ───────────────────────────────────────────────────
+@app.get("/api/models")
+async def models_list():
+    return {"models": model_library.list_models()}
+
+
+@app.post("/api/models/save")
+async def models_save(request: Request):
+    body = await request.json()
+    name = (body.get("name") or state.get("active_model_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Model name is required.")
+    try:
+        meta = model_library.save_model(state, name, note=body.get("note", ""), source="manual")
+        return {"message": f"Saved model '{name}'.", "model": meta}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/load")
+async def models_load(request: Request):
+    body = await request.json()
+    slug = (body.get("slug") or "").strip()
+    if not slug:
+        raise HTTPException(status_code=400, detail="Model slug is required.")
+    try:
+        info = model_library.load_model(state, slug)
+        return {"message": f"Loaded model '{info['name']}'.", "model": info}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/models/{slug}")
+async def models_delete(slug: str):
+    try:
+        model_library.delete_model(slug)
+        if state.get("active_model_slug") == slug:
+            state["active_model_slug"] = None
+            state["active_model_name"] = None
+        return {"message": f"Deleted model '{slug}'."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/import")
+async def models_import(
+    name: str = Form(...),
+    note: str = Form(""),
+    model_file: UploadFile = File(...),
+    tokenizer_file: Optional[UploadFile] = File(None),
+):
+    try:
+        tok_bytes = await tokenizer_file.read() if tokenizer_file and tokenizer_file.filename else None
+        meta = model_library.import_vnexai_files(
+            state,
+            name.strip(),
+            await model_file.read(),
+            tok_bytes,
+            note=note,
+        )
+        if meta.get("tokenizer_missing"):
+            return {
+                "message": f"Imported weights for '{name}' (no tokenizer — reference only until a tokenizer is added).",
+                "model": meta,
+            }
+        return {"message": f"Imported model '{name}'.", "model": meta}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/register-external")
+async def models_register_external(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Model name is required.")
+    meta = model_library.register_external_model(
+        name,
+        format_label=body.get("format", "external"),
+        reference=body.get("reference", ""),
+        note=body.get("note", ""),
+    )
+    return {"message": f"Registered external model '{name}'.", "model": meta}
+
+
+@app.post("/api/export/prepare-bundle")
+async def prepare_export_bundle(request: Request):
+    """Export model.bin + tokenizer.bin + reasoning handler + runtime files as a zip."""
+    body = await request.json()
+    model_name = (body.get("model_name") or "vnexai_model").strip().replace(" ", "_").lower()
+    model = state.get("model")
+    tokenizer = state.get("tokenizer")
+    if not model or not tokenizer:
+        raise HTTPException(status_code=400, detail="No trained model and tokenizer.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
+        model_path = tmp.name
+    if hasattr(model, "save_model"):
+        model.save_model(model_path)
+    else:
+        model.save(model_path)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
+        tok_path = tmp.name
+    tokenizer.save(tok_path)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(model_path, f"{model_name}.bin")
+        zf.write(tok_path, f"{model_name}_tokenizer.bin")
+        handler = reasoning.reasoning_handler_code(f"{model_name}.bin", f"{model_name}_tokenizer.bin")
+        zf.writestr("reasoning_handler.py", handler)
+        zf.writestr("README.md", reasoning.export_readme(model_name))
+        for fname in ("transformer_model.py", "chatbot_tokenizer.py", "chatbot_model.py"):
+            fpath = os.path.join(os.path.dirname(__file__), fname)
+            if os.path.exists(fpath):
+                zf.write(fpath, fname)
+
+    os.unlink(model_path)
+    os.unlink(tok_path)
+
+    state["export_bundle_bytes"] = buf.getvalue()
+    return {
+        "size_bytes": len(state["export_bundle_bytes"]),
+        "size_mb": round(len(state["export_bundle_bytes"]) / (1024 * 1024), 2),
+        "ready": True,
+        "filename": f"{model_name}_vnexai_bundle.zip",
+    }
+
+
+@app.get("/api/export/download-bundle")
+async def download_export_bundle(name: str = "vnexai_model"):
+    bundle = state.get("export_bundle_bytes")
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Bundle not prepared.")
+    filename = f"{name}_vnexai_bundle.zip"
+    return StreamingResponse(
+        io.BytesIO(bundle),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/export/model-info")

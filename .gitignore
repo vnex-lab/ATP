@@ -43,6 +43,7 @@ frontend/node_modules/
 # Data files
 *.json
 pretrain_data.json
+saved_models/
 
 # Assets
 attached_assets/

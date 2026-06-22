@@ -1,240 +1,233 @@
 import type { Page, AppStatus } from '../types'
+import { theme } from '../theme'
+import Logo from './Logo'
+import { Check } from 'lucide-react'
 
 interface NavItem {
   id: Page
   label: string
-  icon: string
   step: number
   done: (s: AppStatus) => boolean
   available: (s: AppStatus) => boolean
+  section?: 'studio' | 'inference'
 }
 
 const NAV: NavItem[] = [
-  {
-    id: 'data',
-    label: 'Data',
-    icon: '⬆',
-    step: 1,
-    done: (s) => s.has_training_data,
-    available: () => true,
-  },
-  {
-    id: 'model',
-    label: 'Model',
-    icon: '⬡',
-    step: 2,
-    done: (s) => s.has_model,
-    available: (s) => s.has_training_data,
-  },
-  {
-    id: 'pretrain',
-    label: 'Pre-train',
-    icon: '◈',
-    step: 3,
-    done: () => false,
-    available: () => true,
-  },
-  {
-    id: 'train',
-    label: 'Train',
-    icon: '▶',
-    step: 4,
-    done: (s) => s.is_trained,
-    available: (s) => s.has_model,
-  },
-  {
-    id: 'chat',
-    label: 'Chat',
-    icon: '◎',
-    step: 5,
-    done: () => false,
-    available: (s) => s.is_trained,
-  },
-  {
-    id: 'export',
-    label: 'Export',
-    icon: '⬇',
-    step: 6,
-    done: () => false,
-    available: (s) => s.has_model,
-  },
+  { id: 'data', label: 'Data', step: 1, done: (s) => s.has_training_data, available: () => true, section: 'studio' },
+  { id: 'models', label: 'Library', step: 2, done: (s) => (s.saved_models_count ?? 0) > 0, available: () => true, section: 'studio' },
+  { id: 'model', label: 'Architecture', step: 3, done: (s) => s.has_model, available: (s) => s.has_training_data, section: 'studio' },
+  { id: 'pretrain', label: 'Pre-train', step: 4, done: () => false, available: () => true, section: 'studio' },
+  { id: 'train', label: 'Train', step: 5, done: (s) => s.is_trained, available: (s) => s.has_model, section: 'studio' },
+  { id: 'export', label: 'Export', step: 6, done: () => false, available: (s) => s.has_model, section: 'studio' },
+  { id: 'chat', label: 'Inference', step: 1, done: () => false, available: (s) => s.is_trained, section: 'inference' },
 ]
 
 interface Props {
   page: Page
   setPage: (p: Page) => void
   status: AppStatus
+  compact?: boolean
 }
 
-export default function Sidebar({ page, setPage, status }: Props) {
+export default function Sidebar({ page, setPage, status, compact }: Props) {
+  const studioItems = NAV.filter((n) => n.section === 'studio')
+  const inferenceItems = NAV.filter((n) => n.section === 'inference')
+
   return (
     <aside
       style={{
-        width: 220,
-        minWidth: 220,
-        background: '#0f0f0f',
-        borderRight: '1px solid #1e1e1e',
+        width: compact ? 52 : 220,
+        minWidth: compact ? 52 : 220,
+        background: theme.sidebar,
+        borderLeft: compact ? `1px solid ${theme.border}` : undefined,
+        borderRight: compact ? undefined : `1px solid ${theme.border}`,
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         userSelect: 'none',
+        order: compact ? 2 : 0,
       }}
     >
-      {/* Logo */}
-      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #1e1e1e' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 12,
-              fontWeight: 700,
-              color: '#fff',
-              letterSpacing: '-0.5px',
-              flexShrink: 0,
-            }}
-          >
-            LV
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#e2e8f0', letterSpacing: '-0.3px' }}>
-              LLM Vite
-            </div>
-            <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
-              Train your own AI
-            </div>
-          </div>
+      {compact && (
+        <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center', borderBottom: `1px solid ${theme.border}` }}>
+          <Logo size={24} />
         </div>
-      </div>
+      )}
+      {!compact && (
+        <div style={{ padding: '16px 16px 14px', borderBottom: `1px solid ${theme.border}` }}>
+          <Logo size={28} showWordmark />
+        </div>
+      )}
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div style={{ fontSize: 10, color: '#374151', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '6px 10px 8px' }}>
-          Workflow
-        </div>
-        {NAV.map((item) => {
-          const active = page === item.id
-          const done = item.done(status)
-          const available = item.available(status)
-          return (
-            <button
-              key={item.id}
-              onClick={() => setPage(item.id)}
-              disabled={!available}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 10px',
-                borderRadius: 7,
-                border: 'none',
-                cursor: available ? 'pointer' : 'default',
-                background: active ? '#1e3a5f' : 'transparent',
-                color: active ? '#93c5fd' : available ? '#94a3b8' : '#374151',
-                fontSize: 13,
-                fontWeight: active ? 600 : 400,
-                textAlign: 'left',
-                width: '100%',
-                transition: 'all 0.1s',
-                opacity: available ? 1 : 0.45,
-              }}
-              onMouseEnter={(e) => {
-                if (available && !active) {
-                  ;(e.currentTarget as HTMLButtonElement).style.background = '#151515'
-                  ;(e.currentTarget as HTMLButtonElement).style.color = '#cbd5e1'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (available && !active) {
-                  ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-                  ;(e.currentTarget as HTMLButtonElement).style.color = available ? '#94a3b8' : '#374151'
-                }
-              }}
-            >
-              <span
-                style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 6,
-                  background: active ? '#2563eb' : done ? '#14532d' : '#1c1c1c',
-                  border: `1px solid ${active ? '#3b82f6' : done ? '#16a34a' : '#252525'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 10,
-                  color: active ? '#fff' : done ? '#22c55e' : '#64748b',
-                  flexShrink: 0,
-                  fontFamily: 'monospace',
-                }}
-              >
-                {done ? '✓' : item.step}
-              </span>
-              <span style={{ flex: 1 }}>{item.label}</span>
-              {item.id === 'train' && status.training.is_training && (
-                <span
-                  className="pulse-dot"
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: '#3b82f6',
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-            </button>
-          )
-        })}
+      <nav style={{ flex: 1, padding: compact ? '8px 4px' : '8px 6px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {!compact && (
+          <SectionLabel>Studio</SectionLabel>
+        )}
+        {studioItems.map((item) => (
+          <NavButton
+            key={item.id}
+            item={item}
+            active={page === item.id}
+            status={status}
+            compact={compact}
+            onClick={() => setPage(item.id)}
+          />
+        ))}
+
+        {!compact && inferenceItems.length > 0 && (
+          <SectionLabel style={{ marginTop: 10 }}>Inference</SectionLabel>
+        )}
+        {inferenceItems.map((item) => (
+          <NavButton
+            key={item.id}
+            item={item}
+            active={page === item.id}
+            status={status}
+            compact={compact}
+            onClick={() => setPage(item.id)}
+            highlight
+          />
+        ))}
       </nav>
 
-      {/* Status bar */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid #1e1e1e' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <StatusRow
-            label="Data"
-            value={status.has_training_data ? `${status.training_data_count.toLocaleString()} pairs` : 'None'}
-            ok={status.has_training_data}
-          />
-          <StatusRow
-            label="Vocab"
-            value={status.has_tokenizer ? `${status.tokenizer_vocab_size.toLocaleString()} tokens` : 'None'}
-            ok={status.has_tokenizer}
-          />
-          <StatusRow
-            label="Model"
-            value={status.has_model ? (status.model_type ?? 'Ready') : 'None'}
-            ok={status.has_model}
-          />
-          <StatusRow
-            label="Trained"
-            value={status.is_trained ? 'Yes' : 'No'}
-            ok={status.is_trained}
-          />
-        </div>
-        {status.training.gpu_available && (
-          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
-            <span style={{ fontSize: 11, color: '#22c55e' }}>GPU Active</span>
+      {!compact && (
+        <div style={{ padding: '12px 14px', borderTop: `1px solid ${theme.border}` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <StatusRow label="Data" value={status.has_training_data ? `${status.training_data_count.toLocaleString()} pairs` : 'None'} ok={status.has_training_data} />
+            <StatusRow label="Library" value={`${status.saved_models_count ?? 0} saved`} ok={(status.saved_models_count ?? 0) > 0} />
+            <StatusRow label="Model" value={status.active_model_name ?? (status.has_model ? (status.model_type ?? 'Ready') : 'None')} ok={status.has_model} />
+            <StatusRow label="Mode" value={status.training_mode === 'finetune' ? 'Fine-tune' : 'Scratch'} ok={status.has_model} />
+            <StatusRow label="CoT" value={status.cot_reasoning?.enabled ? 'On' : 'Off'} ok={!!status.cot_reasoning?.enabled} />
           </div>
-        )}
-        <div style={{ marginTop: 10, fontSize: 10, color: '#374151' }}>
-          LLM Vite · NumPy/CuPy
+          {status.training.gpu_available && (
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.success, display: 'inline-block' }} />
+              <span style={{ fontSize: 11, color: theme.success }}>GPU active</span>
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </aside>
+  )
+}
+
+function SectionLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={{
+      fontSize: 10,
+      color: theme.textDim,
+      fontWeight: 600,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+      padding: '6px 10px 8px',
+      ...style,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function NavButton({
+  item,
+  active,
+  status,
+  compact,
+  onClick,
+  highlight,
+}: {
+  item: NavItem
+  active: boolean
+  status: AppStatus
+  compact?: boolean
+  onClick: () => void
+  highlight?: boolean
+}) {
+  const done = item.done(status)
+  const available = item.available(status)
+
+  if (compact) {
+    return (
+      <button
+        onClick={onClick}
+        disabled={!available}
+        title={item.label}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+          padding: '8px 0',
+          borderRadius: 4,
+          border: 'none',
+          cursor: available ? 'pointer' : 'default',
+          background: active ? theme.active : 'transparent',
+          color: active ? '#fff' : available ? theme.textSecondary : theme.textDim,
+          opacity: available ? 1 : 0.45,
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600 }}>{item.label.slice(0, 2).toUpperCase()}</span>
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={!available}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '7px 10px',
+        borderRadius: 4,
+        border: 'none',
+        cursor: available ? 'pointer' : 'default',
+        background: active ? (highlight ? theme.accentMuted : theme.active) : 'transparent',
+        color: active ? '#fff' : available ? theme.textSecondary : theme.textDim,
+        fontSize: 13,
+        fontWeight: active ? 500 : 400,
+        textAlign: 'left',
+        width: '100%',
+        opacity: available ? 1 : 0.5,
+      }}
+      onMouseEnter={(e) => {
+        if (available && !active) (e.currentTarget as HTMLButtonElement).style.background = theme.hover
+      }}
+      onMouseLeave={(e) => {
+        if (available && !active) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+      }}
+    >
+      <span
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: 3,
+          background: active ? theme.accent : theme.badge,
+          border: `1px solid ${active ? theme.accent : theme.border}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 10,
+          color: done && !active ? theme.success : active ? '#fff' : theme.textMuted,
+          flexShrink: 0,
+          fontFamily: theme.mono,
+        }}
+      >
+        {done ? <Check size={11} strokeWidth={3} /> : item.step}
+      </span>
+      <span style={{ flex: 1 }}>{item.label}</span>
+      {item.id === 'train' && status.training.is_training && (
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.accent, flexShrink: 0 }} className="pulse-dot" />
+      )}
+    </button>
   )
 }
 
 function StatusRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <span style={{ fontSize: 11, color: '#475569' }}>{label}</span>
-      <span style={{ fontSize: 11, color: ok ? '#22c55e' : '#475569', fontWeight: ok ? 500 : 400 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 11, color: theme.textMuted }}>{label}</span>
+      <span style={{ fontSize: 11, color: ok ? theme.text : theme.textDim, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 }}>
         {value}
       </span>
     </div>

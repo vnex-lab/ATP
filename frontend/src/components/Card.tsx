@@ -1,12 +1,13 @@
 import type { ReactNode, CSSProperties } from 'react'
+import { theme } from '../theme'
 
 export default function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div style={{
-      background: '#0f0f0f',
-      border: '1px solid #1e1e1e',
-      borderRadius: 10,
-      padding: '18px 20px',
+      background: theme.panel,
+      border: `1px solid ${theme.border}`,
+      borderRadius: 6,
+      padding: '16px 18px',
       ...style,
     }}>
       {children}

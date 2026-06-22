@@ -5,6 +5,8 @@ import PageShell from '../components/PageShell'
 import Card from '../components/Card'
 import Btn from '../components/Btn'
 import Badge from '../components/Badge'
+import { theme } from '../theme'
+import { inputStyle, insetBox, alertColors } from '../styles'
 
 type ModelType = 'transformer_decoder' | 'transformer_enc_dec' | 'rnn'
 
@@ -131,7 +133,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
       {/* Step 1: Tokenizer */}
       <Card style={{ marginBottom: 16 }}>
         <StepLabel step={1} done={status.has_tokenizer}>Tokenizer / Vocabulary</StepLabel>
-        <p style={{ color: '#94a3b8', fontSize: 13, margin: '6px 0 16px' }}>
+        <p style={{ color: theme.textSecondary, fontSize: 13, margin: '6px 0 16px' }}>
           Builds a word-to-index mapping from your training text. Vocabulary size = number of unique words found (capped by maximum).
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
@@ -149,9 +151,9 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
             type="checkbox"
             checked={padVocab}
             onChange={(e) => setPadVocab(e.target.checked)}
-            style={{ accentColor: '#3b82f6', width: 14, height: 14 }}
+            style={{ accentColor: theme.accent, width: 14, height: 14 }}
           />
-          <span style={{ fontSize: 13, color: '#94a3b8' }}>
+          <span style={{ fontSize: 13, color: theme.textSecondary }}>
             Pad with common English words <span style={{ color: '#475569' }}>(recommended for small datasets)</span>
           </span>
         </label>
@@ -187,8 +189,8 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
                 gap: 10,
                 padding: '10px 14px',
                 borderRadius: 8,
-                border: `1px solid ${modelType === id ? '#3b82f6' : '#1e1e1e'}`,
-                background: modelType === id ? '#1e3a5f22' : '#0f0f0f',
+                border: `1px solid ${modelType === id ? theme.accent : theme.border}`,
+                background: modelType === id ? theme.accentMuted : theme.editor,
                 cursor: 'pointer',
                 transition: 'all 0.1s',
               }}
@@ -199,10 +201,10 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
                 value={id}
                 checked={modelType === id}
                 onChange={() => setModelType(id)}
-                style={{ accentColor: '#3b82f6', marginTop: 2 }}
+                style={{ accentColor: theme.accent, marginTop: 2 }}
               />
               <div>
-                <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 500 }}>{label}</div>
+                <div style={{ color: theme.text, fontSize: 13, fontWeight: 500 }}>{label}</div>
                 <div style={{ color: '#475569', fontSize: 12, marginTop: 2 }}>{desc}</div>
               </div>
             </label>
@@ -210,7 +212,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
         </div>
 
         {/* GPU Guide */}
-        <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+        <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
           <div style={{ fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>GPU Size Guide</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
             {[
@@ -220,7 +222,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
               ['RTX 4090 24GB', 'embed=1024, heads=16, layers=12, ff=4096'],
             ].map(([gpu, params]) => (
               <div key={gpu} style={{ fontSize: 11 }}>
-                <span style={{ color: '#94a3b8' }}>{gpu}: </span>
+                <span style={{ color: theme.textSecondary }}>{gpu}: </span>
                 <span style={{ color: '#64748b', fontFamily: 'monospace' }}>{params}</span>
               </div>
             ))}
@@ -288,7 +290,7 @@ export default function ModelPage({ status, onRefresh }: { status: AppStatus; on
           <div style={{ marginTop: 14 }}>
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
-              style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+              style={{ background: 'none', border: 'none', color: theme.textSecondary, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <span style={{ transform: showAdvanced ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s' }}>▶</span>
               Advanced Training Parameters
@@ -369,7 +371,7 @@ function StepLabel({ step, done, children }: { step: number; done: boolean; chil
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 11, color: done ? '#22c55e' : '#64748b', fontFamily: 'monospace', flexShrink: 0,
       }}>{done ? '✓' : step}</span>
-      <span style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0' }}>{children}</span>
+      <span style={{ fontWeight: 600, fontSize: 14, color: theme.text }}>{children}</span>
     </div>
   )
 }
@@ -411,33 +413,26 @@ function Select({ value, onChange, options }: { value: string; onChange: (v: str
 
 function StatChip({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: '#111', borderRadius: 6, padding: '5px 10px', border: '1px solid #1e1e1e' }}>
+    <div style={{ background: theme.panel, borderRadius: 6, padding: '5px 10px', border: `1px solid ${theme.border}` }}>
       <span style={{ fontSize: 11, color: '#475569' }}>{label}: </span>
-      <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}>{value}</span>
+      <span style={{ fontSize: 12, color: theme.text, fontWeight: 500 }}>{value}</span>
     </div>
   )
 }
 
 function Alert({ type, text }: { type: 'success' | 'error' | 'info' | 'warn'; text: string }) {
   const colors = {
-    success: { bg: '#14532d22', border: '#166534', text: '#86efac' },
-    error: { bg: '#450a0a', border: '#7f1d1d', text: '#fca5a5' },
-    info: { bg: '#1e3a5f22', border: '#1e40af', text: '#93c5fd' },
-    warn: { bg: '#451a0322', border: '#92400e', text: '#fcd34d' },
+    ...alertColors,
+    warn: { bg: theme.warningBg, border: theme.warning, text: theme.warning },
   }
   const c = colors[type]
   return (
-    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: c.text, fontSize: 13 }}>
+    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, color: c.text, fontSize: 13 }}>
       {text}
     </div>
   )
 }
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6, fontWeight: 500,
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', background: '#111', border: '1px solid #252525', borderRadius: 7,
-  padding: '7px 10px', color: '#e2e8f0', fontSize: 13, outline: 'none', fontFamily: 'inherit',
+  fontSize: 12, color: theme.textSecondary, display: 'block', marginBottom: 6, fontWeight: 500,
 }
